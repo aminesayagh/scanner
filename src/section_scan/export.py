@@ -29,6 +29,9 @@ def build(run: Path, draft: bool = False) -> ExportDocument:
             listed = ", ".join(f"{r.id} ({r.label})" for r in outstanding)
             raise ExportError(f"{len(outstanding)} region(s) still need review: {listed}")
         rows = [(r.id, r.label, r.role, r.status, r.bounds, r.element_ids, r.source_section_ids) for r in retained]
+    if not rows and not draft:
+        raise ExportError("every region is excluded; there is nothing to export")
+    rows.sort(key=lambda row: row[4].y)  # `order` is top-to-bottom page order, overlays included
 
     regions = [
         ExportRegion(

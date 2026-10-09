@@ -27,31 +27,32 @@ ambiguous sections a reviewer must inspect.
 
 ## Results
 
-| Capture | Mode | Expected | Proposed | Missed | False splits | Ambiguous | Est. edits |
-|---|---|---|---|---|---|---|---|
-| lingowp.com | combined | 8 | 9 | 0 | 0 | 1 | 1 |
-| | container | 8 | 9 | 0 | 0 | 0 | 0 |
-| | gaps | 8 | 8 | 1 | 0 | 6 | 7 |
-| playwright.dev/python | combined | 9 | 9 | 0 | 0 | 0 | 0 |
-| | container | 9 | 9 | 0 | 0 | 0 | 0 |
-| | gaps | 9 | 9 | 0 | 0 | 6 | 6 |
-| candidates-landmarks fixture | combined | 9 | 9 | 0 | 0 | 4 | 4 |
-| | container | 9 | 8 | 1 | 0 | 2 | 3 |
-| | gaps | 9 | 8 | 1 | 0 | 6 | 7 |
-| candidates-divs fixture | combined | 9 | 8 | 1 | 0 | 4 | 5 |
-| | container | 9 | 7 | 2 | 0 | 2 | 4 |
-| | gaps | 9 | 4 | 5 | 0 | 3 | 8 |
-| normalize-base / -wrapped fixtures | combined | 4 | 4 | 0 | 0 | 0 | 0 |
-| | container | 4 | 4 | 0 | 0 | 0 | 0 |
-| | gaps | 4 | 4 | 0 | 0 | 2 | 2 |
+| Capture | Mode | Expected | Proposed | Missed | False splits | Extra | Ambiguous | Est. edits |
+|---|---|---|---|---|---|---|---|---|
+| lingowp.com | combined | 8 | 9 | 0 | 0 | 1 | 1 | 1 |
+| | container | 8 | 9 | 0 | 0 | 1 | 0 | 0 |
+| | gaps | 8 | 8 | 1 | 0 | 1 | 6 | 7 |
+| playwright.dev/python | combined | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
+| | container | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
+| | gaps | 9 | 9 | 0 | 0 | 0 | 6 | 6 |
+| candidates-landmarks fixture | combined | 9 | 9 | 0 | 0 | 0 | 4 | 4 |
+| | container | 9 | 8 | 1 | 0 | 0 | 2 | 3 |
+| | gaps | 9 | 8 | 1 | 0 | 0 | 6 | 7 |
+| candidates-divs fixture | combined | 9 | 8 | 1 | 0 | 0 | 4 | 5 |
+| | container | 9 | 7 | 2 | 0 | 0 | 2 | 4 |
+| | gaps | 9 | 4 | 5 | 0 | 0 | 3 | 8 |
+| normalize-base / -wrapped fixtures | combined | 4 | 4 | 0 | 0 | 0 | 0 | 0 |
+| | container | 4 | 4 | 0 | 0 | 0 | 0 | 0 |
+| | gaps | 4 | 4 | 0 | 0 | 0 | 2 | 2 |
 
-lingowp proposes 9 sections for 8 expected: its dashboard band has no text, so the annotation cannot
-anchor it and it is not counted.
+**Extra** counts proposed sections that hold no anchor. On lingowp it is the dashboard band (y 1882–3028):
+a correct section that has no text, so the annotation cannot anchor it. Extra sections are listed by
+`evaluate` for a person to judge; they are not automatically wrong.
 
 ## What the baseline shows
 
-- **No false splits in any mode.** The detectors err towards keeping regions together or leaving them
-  ambiguous, never towards cutting an expected section.
+- **No anchored false splits in any mode.** No expected section's anchors were cut apart. Splits that
+  only separate textless content are not measured by anchors; they show up as "extra" sections instead.
 - **Structure carries the two real pages.** Both use `<section>` or page-wide colour bands, so
   container-only evidence is as good as the combined detector there.
 - **Gap evidence helps where structure is silent.** On the landmark fixture, the combined detector finds

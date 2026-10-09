@@ -9,7 +9,7 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape as escape_markup
-from rich.table import Table
+from rich.table import Column, Table
 from rich.tree import Tree
 
 from .capture import capture as run_capture
@@ -398,6 +398,7 @@ def export(
     except export_mod.ExportError as e:
         console.print(f"[red]Not exported:[/] {escape_markup(str(e))}")
         raise typer.Exit(1)
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(doc.model_dump_json(indent=2))
     console.print(f"Exported {len(doc.regions)} regions ({doc.kind}) → {output}")
 
@@ -412,21 +413,29 @@ def evaluate(
 
     Runs in memory: proposals.json and any review are left untouched.
     """
+    if config is None and Path("detector.toml").is_file():
+        config = Path("detector.toml")  # same default as `detect`, so a tuning loop measures what it tunes
     base = DetectorConfig.model_validate(tomllib.loads(config.read_text())) if config else DetectorConfig()
+    console.print(f"[dim]Config: {config or 'built-in defaults'} — {base.model_dump(exclude={'mode'})}[/]")
     ann = Annotation.model_validate_json(annotation.read_text())
     snapshot = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
     groups = normalize(snapshot)
     cands = generate(groups)
-    table = Table("Mode", "Expected", "Proposed", "Missed", "False splits", "Ambiguous", "Est. edits")
+    table = Table("Expected", "Proposed", "Missed", "False splits", "Extra", "Ambiguous", "Est. edits")
+    table.columns.insert(0, Column("Mode", no_wrap=True, min_width=9))  # never truncate the mode name
     details = []
     for mode in ("combined", "container", "gaps"):
         props = detect_sections(snapshot, groups, cands, base.model_copy(update={"mode": mode}))
         r = evaluate_run(snapshot, props, ann)
         table.add_row(mode, str(r.expected_sections), str(r.proposed_sections), str(len(r.missed_boundaries)),
-                      str(len(r.false_splits)), str(r.ambiguous_sections), str(r.estimated_edits))
+                      str(len(r.false_splits)), str(len(r.extra_sections)), str(r.ambiguous_sections),
+                      str(r.estimated_edits))
         details += [f"{mode}: missed {m}" for m in r.missed_boundaries] + [f"{mode}: false split, {f}" for f in r.false_splits]
+        details += [f"{mode}: extra section {x}" for x in r.extra_sections]
         if r.unresolved_anchors:
             details.append(f"anchors not found: {', '.join(r.unresolved_anchors)}")
+        if r.unowned_anchors:
+            details.append(f"{mode}: anchors in no proposed section: {', '.join(r.unowned_anchors)}")
     console.print(f"{ann.page}  (annotated by {ann.annotator})")
     console.print(table)
     for d in dict.fromkeys(details):

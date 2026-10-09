@@ -22,20 +22,24 @@ class Evaluation(BaseModel):
     proposed_sections: int  # header/footer/flow; overlays are reviewed separately
     missed_boundaries: list[str]
     false_splits: list[str]
+    extra_sections: list[str]  # proposed sections holding no anchor: textless content or an over-split
     ambiguous_sections: int
     unresolved_anchors: list[str]  # anchors not found in the capture: fix the annotation
+    unowned_anchors: list[str]  # anchors found, but in elements no proposed section claims
     estimated_edits: int  # merges + splits to fix, plus ambiguous sections to inspect
 
 
 def evaluate(elements: ElementSnapshot, props: ProposalSnapshot, ann: Annotation) -> Evaluation:
     owner = {e: s.id for s in props.sections for e in s.element_ids}
     unresolved: list[str] = []
+    unowned: list[str] = []
 
     def located(anchor: str) -> str | None:
-        for e in elements.elements:
-            if anchor in e.text and e.id in owner:
+        matches = [e for e in elements.elements if anchor in e.text]
+        for e in matches:
+            if e.id in owner:
                 return owner[e.id]
-        unresolved.append(anchor)
+        (unowned if matches else unresolved).append(anchor)
         return None
 
     placed = [[located(a) for a in anchors] for anchors in ann.sections]
@@ -51,12 +55,16 @@ def evaluate(elements: ElementSnapshot, props: ProposalSnapshot, ann: Annotation
             missed.append(f"between {ann.sections[i][-1]!r} and {ann.sections[i + 1][0]!r} (both in {first[0]})")
     proposed = [s for s in props.sections if s.role != "overlay"]
     ambiguous = sum(s.ambiguous for s in proposed)
+    anchored = {x for ids in placed for x in ids if x}
+    extra = [f"{s.id} ({s.label}, y {s.bounds.y:.0f})" for s in proposed if s.id not in anchored]
     return Evaluation(
         expected_sections=len(ann.sections),
         proposed_sections=len(proposed),
         missed_boundaries=missed,
         false_splits=false_splits,
+        extra_sections=extra,
         ambiguous_sections=ambiguous,
         unresolved_anchors=unresolved,
+        unowned_anchors=unowned,
         estimated_edits=len(missed) + len(false_splits) + ambiguous,
     )

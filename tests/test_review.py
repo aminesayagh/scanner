@@ -274,3 +274,18 @@ def test_export_refuses_a_stale_review(run, tmp_path):
     (run / "proposals.json").write_text(json.dumps(props))
     result = cli("export", run, "-o", tmp_path / "x.json", "--draft")
     assert result.exit_code == 1 and "predates" in result.output
+
+
+def test_export_order_is_page_order_and_needs_something_to_export(run, tmp_path):
+    cli("review", run, "list")
+    cli("review", run, "report")
+    cli("review", run, "confirm", "all")
+    out = tmp_path / "new" / "dir" / "sections.json"  # missing folders are created
+    assert cli("export", run, "-o", out).exit_code == 0
+    doc = ExportDocument.model_validate_json(out.read_text())
+    ys = [r.bounds.y for r in doc.regions]
+    assert ys == sorted(ys) and any(r.role == "overlay" for r in doc.regions)
+    for r in state(run).regions:
+        cli("review", run, "exclude", r.id)
+    result = cli("export", run, "-o", tmp_path / "empty.json")
+    assert result.exit_code == 1 and "nothing to export" in result.output

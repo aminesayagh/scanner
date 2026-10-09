@@ -58,3 +58,27 @@ def test_evaluate_compares_three_modes_without_touching_run_files(base):
     assert result.exit_code == 0, result.output
     assert all(m in result.output for m in ("combined", "container", "gaps"))
     assert sorted(p.name for p in out.iterdir()) == before
+
+
+def test_baseline_modes_really_differ(tmp_path):
+    out = tmp_path / "run"
+    capture((FIXTURES / "candidates-landmarks.html").resolve().as_uri(), out, width=1000, height=700)
+    elements = ElementSnapshot.model_validate_json((out / "elements.json").read_text())
+    groups = normalize(elements)
+    cands = generate(groups)
+    annotation = Annotation.model_validate_json((ANNOTATIONS / "candidates-landmarks.json").read_text())
+    results = {
+        mode: evaluate(elements, detect(elements, groups, cands, DetectorConfig(mode=mode)), annotation)
+        for mode in ("combined", "container", "gaps")
+    }
+    # Gap evidence finds the boundary between two transparent, unboxed regions that structure misses...
+    assert results["combined"].missed_boundaries == []
+    assert any("'Plain text' and 'Article'" in m for m in results["container"].missed_boundaries)
+    # ...and gaps alone miss a page-wide colour change that structure catches.
+    assert any("'Part A' and 'Part B'" in m for m in results["gaps"].missed_boundaries)
+
+
+def test_extra_sections_are_counted(base):
+    _, elements, props = base
+    r = evaluate(elements, props, ann(["Home"], ["Footer text"]))  # hero and features are unannotated
+    assert len(r.extra_sections) == 2 and r.missed_boundaries == [] and r.false_splits == []

@@ -20,12 +20,14 @@ To install the command elsewhere: `uv build`, then `pip install dist/section_sca
 
 ## Workflow
 
+From the project folder, prefix commands with `uv run` (or activate `.venv`, or install the wheel):
+
 ```bash
-section-scan capture https://example.com -o runs/example --width 1440 --height 900
-section-scan detect runs/example            # uses ./detector.toml if present, or --config FILE
-section-scan report runs/example --open     # self-contained HTML: regions + every boundary's evidence
-section-scan review runs/example            # interactive; type `help`
-section-scan export runs/example -o sections.json
+uv run section-scan capture https://example.com -o runs/example --width 1440 --height 900
+uv run section-scan detect runs/example            # uses ./detector.toml if present, or --config FILE
+uv run section-scan report runs/example --open     # self-contained HTML: regions + every boundary's evidence
+uv run section-scan review runs/example            # interactive; type `help`
+uv run section-scan export runs/example -o sections.json
 ```
 
 Only `capture` visits the site. Everything after it works offline on the saved run directory, so
@@ -38,9 +40,9 @@ and config always give the same ordered result.
 | `detect DIR` | Writes `groups.json` (simplified visual groups), `candidates.json` (regions, boundaries and evidence) and `proposals.json` (decisions and proposed sections). |
 | `report DIR` | Writes `report.html` for the reviewed state, or the raw proposals if there is no review yet. |
 | `review DIR [CMD …]` | Interactive prompt, or one command: `list`, `inspect`, `rename`, `merge`, `split ID Y\|bN [crossing=above\|below]`, `adjust ID top=… bottom=…`, `exclude`, `confirm ID`, `confirm all`, `undo`, `report`, `finish`. |
-| `export DIR -o FILE [--draft]` | Writes confirmed sections. A normal export fails until every retained region is confirmed; `--draft` includes unconfirmed regions marked `proposed`. |
+| `export DIR -o FILE [--draft]` | Writes confirmed sections in top-to-bottom `order`. A normal export fails until every retained region is confirmed; `--draft` includes unconfirmed regions marked `proposed`. |
 | `overlay DIR [--id …\|--group …\|--regions\|--sections]` | Diagnostic: draws elements, groups, regions or sections over the screenshot. |
-| `evaluate DIR ANNOTATION` | Compares the detector with container-only and gaps-only baselines (see `evaluation/README.md`). |
+| `evaluate DIR ANNOTATION` | Compares the detector with container-only and gaps-only baselines (see `evaluation/README.md`); uses `./detector.toml` like `detect`. |
 
 ## Section policy
 
