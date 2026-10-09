@@ -260,30 +260,40 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
     # a fixed chat button inside a section). They are their own sections; flow sections carve them out.
     reserved = {g for r in cands.regions if r.role != "flow" for g in r.group_ids}
 
-    # Each unit is (region IDs, group IDs, role). A level-0 region with a decided inner split is replaced
-    # by its sub-regions; groups the sub-regions do not cover (e.g. a sidebar) become their own unit.
+    # Each unit is (region IDs, group IDs, role). A region with a decided inner split is replaced by its
+    # sub-regions, each examined the same way; groups the sub-regions do not cover (e.g. a sidebar) become
+    # their own unit.
     units: list[tuple[list[str], list[str], str, list[BoundaryProposal]]] = []
     joins: list[BoundaryProposal | None] = []  # joins[i] sits between units[i] and units[i + 1]
     extras: list[tuple[list[str], list[str], str]] = []
-    prev_last = None
-    for r in level0:
+
+    def pieces(r) -> list[tuple]:
+        """[(region, boundary to the previous piece, undecided inner boundaries)] standing in for r."""
         subs = [s for s in cands.regions if s.parent_region_id == r.id]
         inner = [between[(a.id, c.id)] for a, c in zip(subs, subs[1:]) if (a.id, c.id) in between]
-        pieces = [r]
-        if subs and any(b.decision == "split" for b in inner):
-            pieces = subs
-            covered = {g for s in subs for g in _subtree_ids(s.group_ids, by_id)} | _subtree_ids(reserved, by_id)
-            for g in (x for g in r.group_ids for x in _leftovers(g, covered, by_id)):
-                # In-flow side content (a sidebar) becomes its own section; out-of-flow leftovers
-                # are allocated by overlap below like any other loose content.
-                if by_id[g].positioning in ("flow", "sticky"):
-                    extras.append(([r.id], [g], "flow"))
-                    notes.append(f"{r.id}: inner sections promoted; side content {g} kept as its own section")
-        for i, p in enumerate(pieces):
+        if not any(b.decision == "split" for b in inner):
+            return [(r, None, inner)]
+        covered = {g for s in subs for g in _subtree_ids(s.group_ids, by_id)} | _subtree_ids(reserved, by_id)
+        for g in (x for g in r.group_ids for x in _leftovers(g, covered, by_id)):
+            # In-flow side content (a sidebar) becomes its own section; out-of-flow leftovers
+            # are allocated by overlap below like any other loose content.
+            if by_id[g].positioning in ("flow", "sticky"):
+                extras.append(([r.id], [g], "flow"))
+                notes.append(f"{r.id}: inner sections promoted; side content {g} kept as its own section")
+        out = []
+        for i, s in enumerate(subs):
+            # A sub-region's first piece meets the previous sub-region across their shared boundary.
+            (first, _, undecided), *rest = pieces(s)
+            out += [(first, between.get((subs[i - 1].id, s.id)) if i else None, undecided), *rest]
+        return out
+
+    prev_last = None
+    for r in level0:
+        for i, (p, join, undecided) in enumerate(pieces(r)):
             if units:
                 # The first piece meets the previous level-0 region across their level-0 boundary.
-                joins.append(between.get((prev_last, r.id)) if i == 0 else between.get((pieces[i - 1].id, p.id)))
-            units.append(([p.id], list(p.group_ids), p.role, [] if pieces is subs else inner))
+                joins.append(between.get((prev_last, r.id)) if i == 0 else join)
+            units.append(([p.id], list(p.group_ids), p.role, undecided))
         prev_last = r.id
 
     merged: list[dict] = []
@@ -364,7 +374,7 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
 
 
 def _unit(region_ids, group_ids, role, above=None, inner=()) -> dict:
-    # inner: level-1 boundaries left inside this unit (an ambiguous one flags the section for review)
+    # inner: nested boundaries left inside this unit (an ambiguous one flags the section for review)
     return {
         "region_ids": list(region_ids), "group_ids": list(group_ids), "role": role,
         "above": above, "below": None, "kept": [], "inner": list(inner),

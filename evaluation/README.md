@@ -38,8 +38,8 @@ ambiguous sections a reviewer must inspect.
 | candidates-landmarks fixture | combined | 9 | 9 | 0 | 0 | 0 | 4 | 4 |
 | | container | 9 | 8 | 1 | 0 | 0 | 2 | 3 |
 | | gaps | 9 | 8 | 1 | 0 | 0 | 6 | 7 |
-| candidates-divs fixture | combined | 9 | 8 | 1 | 0 | 0 | 4 | 5 |
-| | container | 9 | 7 | 2 | 0 | 0 | 2 | 4 |
+| candidates-divs fixture | combined | 9 | 9 | 0 | 0 | 0 | 4 | 4 |
+| | container | 9 | 8 | 1 | 0 | 0 | 2 | 3 |
 | | gaps | 9 | 4 | 5 | 0 | 0 | 3 | 8 |
 | normalize-base / -wrapped fixtures | combined | 4 | 4 | 0 | 0 | 0 | 0 | 0 |
 | | container | 4 | 4 | 0 | 0 | 0 | 0 | 0 |
@@ -63,8 +63,8 @@ a correct section that has no text, so the annotation cannot anchor it. Extra se
 
 ## Observed failure cases
 
-1. **Sections nested two levels down** (divs fixture, Part A/B): candidate generation keeps only one level
-   of inner alternatives, so a split inside an inner region is not offered.
+1. **Sections nested two levels down** (divs fixture, Part A/B): fixed. Inner alternatives are now explored
+   recursively, up to `MAX_NESTING` levels (candidates.py), and the detector promotes them level by level.
 2. **Scroll-driven content** (lingowp "Stop putting translation off"): later steps are invisible in a
    static capture. The section is kept whole and flagged ambiguous; the empty area is not detected as a
    limitation.

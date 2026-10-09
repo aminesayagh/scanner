@@ -84,8 +84,8 @@ These are experimental starting values, not validated constants. Unknown keys ar
   carry over to a changed page.
 - **Re-running detection:** after a new detection run, review requires `--restart`. The old review is
   archived, not overwritten.
-- **Inner alternatives:** they are explored one level deep, so a section nested two levels inside
-  another region is not offered as a split.
+- **Inner alternatives:** they are explored up to three levels deep (`MAX_NESTING` in candidates.py), so a
+  section nested deeper inside another region is not offered as a split.
 - **Splitting and adjusting:** only flow sections can be split or adjusted. Content crossing a cut
   needs an explicit `crossing=` choice.
 - **Single reviewer:** there's no locking, so don't review the same run from two terminals at once.

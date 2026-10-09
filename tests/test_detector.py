@@ -159,6 +159,24 @@ def test_landmark_page_end_to_end(tmp_path):
     assert all(by_id[g].kind != "content" for g in props.unassigned_group_ids)  # only scaffolding
 
 
+def test_nested_alternatives_are_promoted_level_by_level(tmp_path):
+    # Divs only: the content wrapper is one level-0 region, the bundle is a level-1 region inside it,
+    # and its two differently painted parts are level-2 alternatives.
+    out = tmp_path / "run"
+    capture((FIXTURES / "candidates-divs.html").resolve().as_uri(), out, width=1000, height=700)
+    elements, groups, cands, props = run_detector(out)
+    find = lambda t: section_of(elements, props, t)  # noqa: E731
+    a, b = find("Part A"), find("Part B")
+    assert a is not b
+    inner = next(x for x in props.boundaries if x.above_region_id in a.region_ids and x.below_region_id in b.region_ids)
+    assert inner.level == 2 and inner.decision == "split"
+    regions = {r.id: r for r in cands.regions}
+    assert all(regions[r.parent_region_id].level == r.level - 1 for r in cands.regions if r.parent_region_id)
+    assert find("Three") is not a and find("Plain") is not b  # neighbours stay their own sections
+    flow = [s.bounds.y for s in props.sections if s.role == "flow"]
+    assert flow == sorted(flow)  # top to bottom
+
+
 def test_no_main_content_is_unsupported_not_empty(tmp_path):
     _, _, _, props = run_detector(capture_html(tmp_path, (
         "<div style='position: fixed; bottom: 0; width: 300px'><p>Cookie notice</p></div>")))

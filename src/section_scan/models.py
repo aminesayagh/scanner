@@ -192,7 +192,7 @@ class RegionCandidate(BaseModel):
 
     id: str
     role: Literal["header", "footer", "flow", "overlay"]
-    level: int = Field(ge=0)  # 0: top-level candidate; 1: nested alternative inside a level-0 region
+    level: int = Field(ge=0)  # 0: top-level candidate; N + 1: nested alternative inside a level-N region
     parent_region_id: str | None
     group_ids: list[str]
     bounds: Rect

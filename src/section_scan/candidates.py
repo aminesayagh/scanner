@@ -29,6 +29,7 @@ FOOTER_MAX_GAP = 100.0  # a footer landmark must end this close to the page bott
 FOOTER_MIN_WIDTH = 0.5  # ...and span at least this share of the page width
 DOMINANT_PAINT_HEIGHT = 0.5  # a painted descendant covering this share of a region's height colours it
 FULL_WIDTH = 0.9  # ...and span at least this share of the page width
+MAX_NESTING = 3  # deepest level of nested alternatives below a top-level region
 
 HEADER_LANDMARKS = {"header", "banner"}
 FOOTER_LANDMARKS = {"footer", "contentinfo"}
@@ -185,10 +186,13 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
     ends = [r for r in top_level if r.role in ("header", "footer")]
     link([r for r in ends if r.role == "header"] + flow + [r for r in ends if r.role == "footer"], 0)
 
-    # Level-1 alternatives: a region whose inside holds visibly distinct sub-regions stays one candidate,
-    # but its inner boundaries are kept for inspection instead of being decided here.
-    # ponytail: one nesting level; recurse further if real pages show regions nested deeper.
-    for r in flow:
+    # Nested alternatives: a region whose inside holds visibly distinct sub-regions stays one candidate,
+    # but its inner boundaries are kept for inspection instead of being decided here. Each sub-region is
+    # examined the same way, down to MAX_NESTING; breadth-first, so shallower regions keep lower IDs.
+    queue = [(r, 0) for r in flow]
+    for r, level in queue:
+        if level >= MAX_NESTING:
+            continue
         holds_main = main is not None and any(i in contains_main for i in r.group_ids)
         if holds_main:
             kids = flow_children(main)  # the main column's regions, apart from any sidebar
@@ -200,8 +204,9 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
             kids = flow_children(kids[0])
         sub_bands = _bands(kids)
         if len(sub_bands) >= 2 and (holds_main or _distinct(sub_bands, by_id)):
-            subs = [add_region("flow", b, 1, r.id, _band_note(b)) for b in sub_bands]
-            link(subs, 1)
+            subs = [add_region("flow", b, level + 1, r.id, _band_note(b)) for b in sub_bands]
+            link(subs, level + 1)
+            queue += [(s, level + 1) for s in subs]
 
     return CandidateSnapshot(
         capture_id=groups.capture_id,
