@@ -1,0 +1,27 @@
+[project]
+name = "section-scan"
+version = "0.1.0"
+description = "Local CLI that detects and reviews the major sections of a webpage"
+readme = "README.md"
+authors = [
+    { name = "aminesayagh", email = "aminesayagh1997@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.63.0",
+    "pydantic>=2.14.0",
+    "rich>=15.0.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+section-scan = "section_scan.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.17,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
