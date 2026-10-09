@@ -27,17 +27,29 @@
     const t = ownFullText(el);
     return t.length > 80 ? t.slice(0, 79) + '…' : t;
   };
-  // Headings, paragraphs and list items are read whole (inline links and emphasis included), as rendered.
+  // Headings, paragraphs and list items are read whole (inline links and emphasis included).
   const TEXT_BLOCKS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li']);
-  // A list item's text leaves out nested lists: their items are listed on their own.
+  const NO_TEXT = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+  // The block's DOM text, including parts not painted right now (a closed <details>, content hidden until
+  // an animation or click); only display: none parts are left out. Block-level children are separated by
+  // a space, inline ones are not. A list item leaves out nested lists: their items are listed on their own.
   const blockText = (el) => {
-    if (el.tagName !== 'LI') return collapse(el.innerText || '');
-    let t = '';
-    for (const n of el.childNodes) {
-      if (n.nodeType === Node.TEXT_NODE) t += n.textContent;
-      else if (n.nodeType === Node.ELEMENT_NODE && !['UL', 'OL'].includes(n.tagName)) t += ' ' + (n.innerText || '') + ' ';
-    }
-    return collapse(t);
+    const parts = [];
+    const walk = (node) => {
+      for (const c of node.childNodes) {
+        if (c.nodeType === Node.TEXT_NODE) { parts.push(c.textContent); continue; }
+        if (c.nodeType !== Node.ELEMENT_NODE || NO_TEXT.has(c.tagName)) continue;
+        if (el.tagName === 'LI' && (c.tagName === 'UL' || c.tagName === 'OL')) continue;
+        const display = getComputedStyle(c).display;
+        if (display === 'none') continue;
+        const block = !display.startsWith('inline');
+        if (block) parts.push(' ');
+        walk(c);
+        if (block) parts.push(' ');
+      }
+    };
+    walk(el);
+    return collapse(parts.join(''));
   };
   // The root is the page itself; a <body> that scrolls on its own (app-shell layouts) is a scroller like any other.
   const isScroller = (el, cs) =>

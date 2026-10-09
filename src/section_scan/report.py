@@ -13,6 +13,7 @@ from .models import (
     Manifest,
     MessageGroup,
     MessageItem,
+    MessageListItem,
     ProposalSnapshot,
     ReportDocument,
     ReportPosition,
@@ -129,7 +130,7 @@ def _write_json(run: Path, manifest: Manifest, rows, members: dict[str, list[str
         sections.append(ReportSection(
             id=_anchor(content[rid], others, by_id),
             position=ReportPosition(x=b.x, y=b.y, width=b.width, height=b.height), flags=flags, role=role,
-            message=_message(members[rid], by_id),
+            message=_message(_with_unclaimed_descendants(rid, members, by_id), by_id),
         ))
     doc = ReportDocument(
         link=manifest.final_url or manifest.input_url,
@@ -143,7 +144,7 @@ def _write_json(run: Path, manifest: Manifest, rows, members: dict[str, list[str
 TEXT_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"}
 
 
-def _message(element_ids: list[str], by_id) -> list[MessageItem | MessageGroup]:
+def _message(element_ids: list[str], by_id) -> list[MessageItem | MessageListItem | MessageGroup]:
     """The section's visible text in page order, grouped by the page's DOM branches (see _by_branch).
 
     A heading, paragraph or list item is one entry with its whole text (inline links included), so text
@@ -171,22 +172,38 @@ def _descendants(eid, by_id, skip_lists: bool = False):
         stack.extend(by_id[c].child_ids)
 
 
-def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem]:
-    """Text items under these roots in page order; list items are plain li entries."""
+def _in_message(e) -> bool:
+    """DOM content counts even when not painted right now (closed <details>, waiting for an animation);
+    text meant only for screen readers (1x1, pushed offscreen, clipped away) does not.
+    """
+    v = e.visibility
+    return not (v.tiny or v.offscreen or v.clipped == "hidden" or v.clipped_ancestor)
+
+
+def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem | MessageListItem]:
+    """Text items under these roots in page order. A list item is one li entry; when it holds headings or
+    paragraphs of its own, it keeps them as its children instead of one run of text.
+    """
     ids = {r for r in roots if r in members} | {d for r in roots for d in _descendants(r, by_id) if d in members}
     items, used = [], set()
     for eid in sorted(ids, key=_order):
         e = by_id[eid]
-        if eid in used or not e.visibility.visible:
+        if eid in used or not _in_message(e):
             continue
         if e.tag in TEXT_BLOCKS:
-            used.update(_descendants(eid, by_id, skip_lists=e.tag == "li"))
+            inside = set(_descendants(eid, by_id, skip_lists=e.tag == "li"))
+            used.update(inside)
+            if e.tag == "li" and any(by_id[d].tag in TEXT_BLOCKS - {"li"} for d in inside if d in members):
+                parts = _leaf_items([c for c in e.child_ids if by_id[c].tag not in ("ul", "ol")], members, by_id)
+                if parts:
+                    items.append(MessageListItem(tag="li", children=parts))
+                continue
         if text := _text_of(e):
             items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
     return items
 
 
-def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
+def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageListItem | MessageGroup]:
     """One entry per DOM branch that holds text, one level deep.
 
     A branch whose parts are single items (a heading and its paragraph, the links of one nav) is a group
@@ -202,7 +219,7 @@ def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
 
     def expand(b) -> list[str]:
         e = by_id[b]
-        if e.tag in TEXT_BLOCKS or e.tag in ("ul", "ol") or (e.visibility.visible and _text_of(e)):
+        if e.tag in TEXT_BLOCKS or e.tag in ("ul", "ol") or (_in_message(e) and _text_of(e)):
             return [b]  # content itself, not a wrapper
         sub = parts(b)
         if len(sub) == 1:
@@ -212,12 +229,12 @@ def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
         return [b]
 
     roots = sorted((m for m in members if by_id[m].parent_id not in members), key=_order)
-    out: list[MessageItem | MessageGroup] = []
+    out: list[MessageItem | MessageListItem | MessageGroup] = []
     for b in (x for r in roots if items(r) for x in expand(r)):
         found = items(b)
         if len(found) == 1:
             item = found[0]
-            out.append(item if item.tag != "text" else MessageItem(tag="p", text=item.text))
+            out.append(MessageItem(tag="p", text=item.text) if item.tag == "text" else item)
         else:
             tag = by_id[b].tag if by_id[b].tag in ("ul", "ol") else "group"
             out.append(MessageGroup(tag=tag, children=found))
@@ -270,6 +287,18 @@ def _anchor(content: set[str], others: set[str], by_id) -> str | None:
 
 def _order(eid: str) -> int:
     return int(eid[1:])  # element IDs follow document order
+
+
+def _with_unclaimed_descendants(rid: str, members: dict[str, list[str]], by_id) -> list[str]:
+    """The section's elements plus DOM content nested in them that no section claims.
+
+    Detection groups only visible elements, so text waiting for an animation (visibility: hidden,
+    opacity 0) belongs to no section; for the message it belongs to the section that wraps it.
+    """
+    own = set(members[rid])
+    claimed = {e for ids in members.values() for e in ids}
+    extra = {d for m in own for d in _descendants(m, by_id) if d not in claimed}
+    return sorted(own | extra, key=_order)
 
 
 def _overlap_kinds(rid, role, b, rows) -> list[str]:

@@ -459,16 +459,29 @@ class MessageItem(BaseModel):
     text: str
 
 
+class MessageListItem(BaseModel):
+    """A list item holding headings or paragraphs of its own (e.g. a work entry: date, title, description).
+
+    The only place a third level appears, because the page itself nests these parts in the item.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    tag: Literal["li"]
+    children: list[MessageItem]
+
+
 class MessageGroup(BaseModel):
     """Items that share a DOM branch: a ul/ol with its items, or a "group".
 
-    One level only: anything nested inside the branch is flattened into `children`.
+    One level only: anything nested inside the branch is flattened into `children`, except that a list
+    item with headings or paragraphs of its own keeps them as its children.
     """
 
     model_config = {"extra": "forbid"}
 
     tag: Literal["group", "ul", "ol"]
-    children: list[MessageItem]
+    children: list[MessageItem | MessageListItem]
 
 
 class ReportSection(BaseModel):
@@ -478,7 +491,7 @@ class ReportSection(BaseModel):
     role: Literal["header", "footer", "flow", "overlay"]
     # The section's visible text in page order, following its DOM branches: one entry per branch, a group
     # when the branch holds several items (a lone group is unwrapped). One level deep.
-    message: list[MessageItem | MessageGroup]
+    message: list[MessageItem | MessageListItem | MessageGroup]
 
 
 class ReportDocument(BaseModel):

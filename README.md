@@ -79,6 +79,11 @@ A compact summary next to `report.html`, with sections top to bottom (excluded o
   items themselves is split into those parts, so a group never contains another group. Headings,
   paragraphs and list items keep their tag (`h1`–`h6`, `p`, `li`); other text inside a group is `text`.
   A `group` with no siblings is unwrapped: its items become the message itself.
+  A list item that holds headings or paragraphs of its own (a work entry: date, title, description) keeps
+  them as its `children`: the only place a third level appears.
+- **What text counts:** the DOM text, including parts not painted at capture (a closed `<details>`,
+  content waiting for an animation). Left out: elements removed with `display: none` (typically duplicate
+  mobile menus) and screen-reader-only text.
 - **Older captures:** captures made before extractor 3 have no `id`, title or description, and only
   80-character text previews.
 

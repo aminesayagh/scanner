@@ -420,3 +420,35 @@ def test_report_json_content_follows_dom_branches_one_level_deep(tmp_path):
     for s in sections:
         for entry in s["message"]:
             assert all("children" not in child for child in entry.get("children", []))
+
+
+def test_report_json_list_items_keep_their_parts_including_collapsed_text(tmp_path):
+    # The shape of masayagh.com's work list: each item is a closed <details> whose description shows on click.
+    work = """<li><details><summary><div><p>Mar 2025 – May 2025</p><h3>SmiAfrica</h3></div></summary>
+                <div><p>Contributed as a software consultant.</p></div></details></li>"""
+    page = tmp_path / "work.html"
+    page.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Work</title>
+      <style>.sr-only {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }}</style></head>
+      <body style="margin: 0"><section style="padding: 40px">
+        <h2>Selected work.</h2>
+        <ul>{work}<li>Plain item</li></ul>
+        <p style="visibility: hidden">Revealed by animation</p>
+        <span class="sr-only">Screen reader only</span>
+      </section>
+      <section style="padding: 40px; background: rgb(30, 30, 60); color: white"><h2>Next</h2></section>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    message = json.loads((out / "report.json").read_text())["sections"][0]["message"]
+    assert message[0] == {"tag": "h2", "text": "Selected work."}
+    assert message[1] == {"tag": "ul", "children": [
+        {"tag": "li", "children": [
+            {"tag": "p", "text": "Mar 2025 – May 2025"},
+            {"tag": "h3", "text": "SmiAfrica"},
+            {"tag": "p", "text": "Contributed as a software consultant."},  # inside the closed <details>
+        ]},
+        {"tag": "li", "text": "Plain item"},
+    ]}
+    assert {"tag": "p", "text": "Revealed by animation"} in message  # in the DOM, painted later
+    assert "Screen reader only" not in json.dumps(message)
