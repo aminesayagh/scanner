@@ -12,8 +12,8 @@ from .models import (
     ElementSnapshot,
     Manifest,
     Message,
+    MessageGroup,
     MessageItem,
-    MessageList,
     ProposalSnapshot,
     ReportDocument,
     ReportPosition,
@@ -145,45 +145,94 @@ TEXT_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"}
 
 
 def _message(element_ids: list[str], by_id) -> Message:
-    """The section's visible text in page order, flat: a heading followed by a paragraph are siblings.
+    """The section's visible text, twice: `content` flat in page order (a heading followed by a paragraph
+    are siblings; a ul/ol is the only nesting), and `content_anarchie` grouped by the page's DOM branches.
 
     A heading, paragraph or list item is one entry with its whole text (inline links included), so text
-    inside it is not repeated; other visible text is "text". A ul/ol is the only nesting: its items, and
-    those of lists nested in them, become its children, never a list inside a list.
+    inside it is not repeated; other visible text is "text". Nesting is never more than one level.
     """
     members = set(element_ids)
+    return Message(content=_flat(members, by_id), content_anarchie=_by_branch(members, by_id))
+
+
+def _text_of(e) -> str:
+    return e.full_text if e.full_text is not None else e.text  # before extractor 3: preview only
+
+
+def _descendants(eid, by_id, skip_lists: bool = False):
+    """Descendant IDs; with skip_lists, not those inside nested ul/ol (a list item's text leaves them out)."""
+    stack = list(by_id[eid].child_ids)
+    while stack:
+        c = stack.pop()
+        if skip_lists and by_id[c].tag in ("ul", "ol"):
+            continue
+        yield c
+        stack.extend(by_id[c].child_ids)
+
+
+def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem]:
+    """Text items under these roots in page order; list items are plain li entries."""
+    ids = {r for r in roots if r in members} | {d for r in roots for d in _descendants(r, by_id) if d in members}
     items, used = [], set()
+    for eid in sorted(ids, key=_order):
+        e = by_id[eid]
+        if eid in used or not e.visibility.visible:
+            continue
+        if e.tag in TEXT_BLOCKS:
+            used.update(_descendants(eid, by_id, skip_lists=e.tag == "li"))
+        if text := _text_of(e):
+            items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
+    return items
 
-    def text_of(e) -> str:
-        return e.full_text if e.full_text is not None else e.text  # before extractor 3: preview only
 
-    def descendants(eid):
-        stack = list(by_id[eid].child_ids)
-        while stack:
-            c = stack.pop()
-            yield c
-            stack.extend(by_id[c].child_ids)
+def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
+    """One entry per DOM branch that holds text. Wrappers around a single branch are looked through; a
+    branch with one item gives that item (loose text becomes "p"), with several a group of all of them.
+    """
+    branches = sorted((m for m in members if by_id[m].parent_id not in members), key=_order)
+    branches = [b for b in branches if _leaf_items([b], members, by_id)]
+    while len(branches) == 1:
+        e = by_id[branches[0]]
+        if e.tag in TEXT_BLOCKS or e.tag in ("ul", "ol") or (e.visibility.visible and _text_of(e)):
+            break  # the branch is itself content, not a wrapper
+        inner = [c for c in e.child_ids if c in members and _leaf_items([c], members, by_id)]
+        if not inner:
+            break
+        branches = inner
+    out: list[MessageItem | MessageGroup] = []
+    for b in branches:
+        items = _leaf_items([b], members, by_id)
+        if len(items) == 1:
+            item = items[0]
+            out.append(item if item.tag != "text" else MessageItem(tag="p", text=item.text))
+        else:
+            tag = by_id[b].tag if by_id[b].tag in ("ul", "ol") else "group"
+            out.append(MessageGroup(tag=tag, children=items))
+    return out
 
+
+def _flat(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
+    items, used = [], set()
     for eid in sorted(members, key=_order):
         e = by_id[eid]
         if eid in used or not e.visibility.visible:
             continue
         if e.tag in ("ul", "ol"):
-            inner = sorted(descendants(eid), key=_order)
+            inner = sorted(_descendants(eid, by_id), key=_order)
             used.update(inner)
             children = [
-                MessageItem(tag="li", text=text_of(by_id[c]))
+                MessageItem(tag="li", text=_text_of(by_id[c]))
                 for c in inner
-                if by_id[c].tag == "li" and c in members and by_id[c].visibility.visible and text_of(by_id[c])
+                if by_id[c].tag == "li" and c in members and by_id[c].visibility.visible and _text_of(by_id[c])
             ]
             if children:
-                items.append(MessageList(tag=e.tag, children=children))
+                items.append(MessageGroup(tag=e.tag, children=children))
             continue
         if e.tag in TEXT_BLOCKS:
-            used.update(descendants(eid))  # already part of the block's text
-        if text := text_of(e):
+            used.update(_descendants(eid, by_id))  # already part of the block's text
+        if text := _text_of(e):
             items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
-    return Message(content=items)
+    return items
 
 
 MEDIA = {"img", "svg", "video", "picture", "canvas", "iframe", "object", "embed"}

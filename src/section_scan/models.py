@@ -459,17 +459,22 @@ class MessageItem(BaseModel):
     text: str
 
 
-class MessageList(BaseModel):
-    """A ul/ol with its items; nested lists add their items here instead of nesting further."""
+class MessageGroup(BaseModel):
+    """Items that share a DOM branch: a ul/ol with its items, or a "group" (only in content_anarchie).
+
+    One level only: anything nested inside the branch is flattened into `children`.
+    """
 
     model_config = {"extra": "forbid"}
 
-    tag: Literal["ul", "ol"]
+    tag: Literal["group", "ul", "ol"]
     children: list[MessageItem]
 
 
 class Message(BaseModel):
-    content: list[MessageItem | MessageList]  # the section's visible text in page order, flat except lists
+    content: list[MessageItem | MessageGroup]  # visible text in page order, flat except ul/ol
+    # The same text following the page's DOM branches: one entry per branch, a group when it holds several.
+    content_anarchie: list[MessageItem | MessageGroup]
 
 
 class ReportSection(BaseModel):

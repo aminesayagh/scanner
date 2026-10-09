@@ -368,3 +368,45 @@ def test_report_json_section_id_is_an_anchor_wrapping_all_its_content(tmp_path):
     assert ids["Intro"] == "intro"  # the section element itself
     assert ids["Pricing"] == "pricing"  # an inner wrapper around all the content, not the heading-only one
     assert ids["FAQ"] is None  # only the heading has an id; "page" also wraps other sections
+
+
+def test_report_json_content_anarchie_follows_dom_branches_one_level_deep(tmp_path):
+    # The shape of masayagh.com's header: wrappers, then three branches.
+    page = tmp_path / "branches.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Branches</title></head>
+      <body style="margin: 0">
+        <header style="height: 60px"><div><div style="display: flex; gap: 40px">
+          <div><img alt="" width="20" height="20" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'/>"><time>11:26 PM, Morocco</time></div>
+          <div><nav><a href="#">Home</a> <span>/</span> <a href="#">Projects</a></nav></div>
+          <nav><a href="#">About us</a> <a href="#">Get in touch</a></nav>
+        </div></div></header>
+        <section style="padding: 40px; background: rgb(240, 240, 250)">
+          <div><div><h2>Plans</h2><p>Pick one</p></div>
+            <ul><li>Starter</li><li>Pro<ol><li>Nested</li></ol></li></ul>
+            <div><a href="#">Start free</a></div></div>
+        </section>
+        <section style="padding: 40px; background: rgb(30, 30, 60); color: white"><h2>Next</h2></section>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    sections = json.loads((out / "report.json").read_text())["sections"]
+    header = next(s for s in sections if s["role"] == "header")["message"]
+    assert header["content_anarchie"] == [
+        {"tag": "p", "text": "11:26 PM, Morocco"},
+        {"tag": "group", "children": [{"tag": "text", "text": "Home"}, {"tag": "text", "text": "/"},
+                                      {"tag": "text", "text": "Projects"}]},
+        {"tag": "group", "children": [{"tag": "text", "text": "About us"}, {"tag": "text", "text": "Get in touch"}]},
+    ]
+    assert [i["text"] for i in header["content"]] == ["11:26 PM, Morocco", "Home", "/", "Projects", "About us", "Get in touch"]
+    plans = next(s for s in sections if s["message"]["content"] and s["message"]["content"][0].get("text") == "Plans")
+    assert plans["message"]["content_anarchie"] == [
+        {"tag": "group", "children": [{"tag": "h2", "text": "Plans"}, {"tag": "p", "text": "Pick one"}]},
+        {"tag": "ul", "children": [{"tag": "li", "text": "Starter"}, {"tag": "li", "text": "Pro"},
+                                   {"tag": "li", "text": "Nested"}]},
+        {"tag": "p", "text": "Start free"},
+    ]
+    # One level only: no group ever holds another group.
+    for s in sections:
+        for entry in s["message"]["content_anarchie"]:
+            assert all("children" not in child for child in entry.get("children", []))
