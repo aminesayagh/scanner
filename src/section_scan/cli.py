@@ -4,9 +4,11 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 from rich.tree import Tree
 
 from .capture import capture as run_capture
+from .candidates import generate
 from .models import ElementSnapshot
 from .normalize import normalize
 from .overlay import write_overlay
@@ -79,16 +81,20 @@ def overlay(
     run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory from `capture`."),
     ids: list[str] = typer.Option([], "--id", help="Element ID to draw (repeatable). Default: the body's children."),
     group_ids: list[str] = typer.Option([], "--group", help="Visual group ID to draw instead (repeatable)."),
+    regions: bool = typer.Option(False, "--regions", help="Draw the top-level candidate regions instead."),
 ) -> None:
     """Draw element or group boxes over the screenshot to check that geometry lines up."""
     if not (run / "elements.json").exists():
         console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
         raise typer.Exit(2)
+    if regions and not (run / "candidates.json").exists():
+        console.print(f"[red]Error:[/] {run} has no candidates.json; run `section-scan detect {run}` first.")
+        raise typer.Exit(2)
     if group_ids and not (run / "groups.json").exists():
         console.print(f"[red]Error:[/] {run} has no groups.json; run `section-scan detect {run}` first.")
         raise typer.Exit(2)
     try:
-        path = write_overlay(run, ids, group_ids)
+        path = write_overlay(run, ids, group_ids, regions)
     except ValueError as e:
         console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(2)
@@ -98,9 +104,9 @@ def overlay(
 @app.command()
 def detect(
     run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory from `capture`."),
-    depth: int = typer.Option(3, min=0, help="Group tree depth to print."),
+    depth: int = typer.Option(0, min=0, help="Also print the visual-group tree to this depth."),
 ) -> None:
-    """Analyse saved capture evidence (no site visit). Currently: simplify elements into visual groups."""
+    """Analyse saved capture evidence (no site visit): visual groups, then candidate regions and boundaries."""
     if not (run / "elements.json").exists():
         console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
         raise typer.Exit(2)
@@ -125,8 +131,34 @@ def detect(
         elif g.child_ids:
             child.add(f"[dim]… {len(g.child_ids)} more[/]")
 
-    for g in groups.groups:
-        if g.parent_id is None:
-            add(tree, g.id, 0)
-    console.print(tree)
-    console.print(f"Groups written → {run / 'groups.json'}")
+    if depth:
+        for g in groups.groups:
+            if g.parent_id is None:
+                add(tree, g.id, 0)
+        console.print(tree)
+    console.print(f"Groups written → {run / 'groups.json'}  ({len(groups.groups)} groups)")
+
+    cands = generate(groups)
+    (run / "candidates.json").write_text(cands.model_dump_json(indent=1))
+    for note in cands.structure.notes:
+        console.print(f"[dim]{note}[/]")
+    regions = Table("Region", "Role", "Lvl", "Groups", "y", "Height", "Notes")
+    for r in cands.regions:
+        regions.add_row(
+            r.id, r.role, str(r.level), " ".join(r.group_ids), f"{r.bounds.y:.0f}", f"{r.bounds.height:.0f}",
+            "; ".join(r.notes),
+        )
+    console.print(regions)
+    bounds = Table("Boundary", "Lvl", "Between", "y", "Box gap", "Content gap", "Backgrounds", "Spans", "Shared bg")
+    for b in cands.boundaries:
+        e = b.evidence
+        bounds.add_row(
+            b.id, str(b.level), f"{b.above_region_id} → {b.below_region_id}", f"{b.y:.0f}", f"{b.box_gap:.0f}",
+            "?" if b.content_gap is None else f"{b.content_gap:.0f}",
+            "changes" if e.background_change else "same" if e.background_change is False else "unknown",
+            "yes" if e.foreground_spans else "no", e.shared_painted_ancestor or "",
+        )
+    console.print(bounds)
+    for o in cands.overlaps:
+        console.print(f"Overlap {o.region_ids[0]} × {o.region_ids[1]}: {o.kind}, {o.area:.0f} px²")
+    console.print(f"Candidates written → {run / 'candidates.json'}")

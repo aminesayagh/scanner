@@ -1,7 +1,7 @@
 from html import escape
 from pathlib import Path
 
-from .models import ElementSnapshot, GroupSnapshot, Manifest
+from .models import CandidateSnapshot, ElementSnapshot, GroupSnapshot, Manifest
 
 _STYLE = """
 body { margin: 0; font: 13px system-ui, sans-serif; }
@@ -17,10 +17,21 @@ td, th { border: 1px solid #ccc; padding: 2px 6px; text-align: left; }
 """
 
 
-def write_overlay(run_dir: Path, ids: list[str], group_ids: list[str] = ()) -> Path:
-    """Draw selected elements, or visual groups, over the screenshot. Default: the body's children."""
+def write_overlay(run_dir: Path, ids: list[str], group_ids: list[str] = (), regions: bool = False) -> Path:
+    """Draw selected elements, visual groups, or top-level candidate regions over the screenshot.
+
+    Default: the body's children.
+    """
     manifest = Manifest.model_validate_json((run_dir / "manifest.json").read_text())
-    if group_ids:
+    if regions:
+        cands = CandidateSnapshot.model_validate_json((run_dir / "candidates.json").read_text())
+        positioning = {"overlay": "fixed", "header": "sticky"}
+        rows = [
+            (r.id, r.role, positioning.get(r.role, "flow"), True, r.bounds, "; ".join([" ".join(r.group_ids), *r.notes]))
+            for r in cands.regions
+            if r.level == 0
+        ]
+    elif group_ids:
         groups = {g.id: g for g in GroupSnapshot.model_validate_json((run_dir / "groups.json").read_text()).groups}
         _check_known(group_ids, groups, "group")
         snapshot = ElementSnapshot.model_validate_json((run_dir / "elements.json").read_text())

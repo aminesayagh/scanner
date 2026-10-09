@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Candidates (divs only)</title>
+<style>
+  * { margin: 0; }
+  body { font: 16px sans-serif; background: rgb(255, 255, 255); }
+  .top { position: absolute; top: 0; left: 0; right: 0; height: 60px; padding: 0 24px; }
+  .promo { padding: 10px 24px; background: rgb(255, 240, 200); }
+  .content { display: flow-root; }
+  .hero { display: flex; gap: 40px; padding: 100px 40px 60px; background: rgb(20, 20, 40); color: white; }
+  .hero .copy { flex: 1; }
+  .features { position: relative; padding: 60px 40px; background: rgb(245, 245, 245); }
+  .badge { position: absolute; top: -30px; left: 40px; padding: 8px; background: gold; }
+  .cards { display: flex; gap: 20px; }
+  .card { flex: 1; padding: 16px; border: 1px solid rgb(200, 200, 200); }
+  .a { padding: 40px; background: rgb(255, 230, 230); }
+  .b { padding: 40px; background: rgb(230, 255, 230); }
+  .plain { padding: 40px; }
+  .left { float: left; width: 60%; padding: 20px 40px; box-sizing: border-box; }
+  .right { float: right; width: 35%; padding: 20px 40px; box-sizing: border-box; }
+  .bottom { clear: both; padding: 40px; background: rgb(30, 30, 30); color: white; }
+  .cookie { position: fixed; right: 16px; bottom: 16px; width: 300px; padding: 12px; background: white; border: 1px solid; }
+</style></head>
+<body>
+<div id="page">
+<div class="top"><div><a href="#">Home</a> <a href="#">Pricing</a></div></div>
+<div class="promo">Promo bar</div>
+<div class="content">
+  <div class="hero">
+    <div class="copy"><h1>Hero title</h1><p>Hero copy</p></div>
+    <img alt="Hero image" width="300" height="200"
+         src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='300' height='200' fill='rgb(90,90,160)'/></svg>">
+  </div>
+  <div class="features">
+    <span class="badge">New</span>
+    <h2>Features</h2>
+    <div class="cards"><div class="card"><h3>One</h3></div><div class="card"><h3>Two</h3></div><div class="card"><h3>Three</h3></div></div>
+  </div>
+  <div class="bundle">
+    <div class="a"><h2>Part A</h2></div>
+    <div class="b"><h2>Part B</h2></div>
+  </div>
+  <div class="plain"><h2>Plain</h2><p>Plain text</p></div>
+  <div class="left"><h2>Article</h2><p>Main column</p></div>
+  <div class="right"><h2>Aside</h2><p>Side column</p></div>
+</div>
+<div class="bottom"><p>Footer text</p></div>
+</div>
+<div class="cookie"><p>We use cookies</p><button>OK</button></div>
+</body></html>

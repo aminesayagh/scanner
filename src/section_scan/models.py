@@ -185,3 +185,70 @@ class GroupSnapshot(BaseModel):
         if len(members) != len(set(members)):
             raise ValueError("an element is assigned more than once")
         return self
+
+
+class RegionCandidate(BaseModel):
+    """A possible section: one visual group, or side-by-side siblings that share a row."""
+
+    id: str
+    role: Literal["header", "footer", "flow", "overlay"]
+    level: int = Field(ge=0)  # 0: top-level candidate; 1: nested alternative inside a level-0 region
+    parent_region_id: str | None
+    group_ids: list[str]
+    bounds: Rect
+    notes: list[str]
+
+
+class BoundaryEvidence(BaseModel):
+    landmarks: tuple[str | None, str | None]  # above, below
+    backgrounds: tuple[str, str]  # effective paint on each side: colour, "complex", or "canvas"
+    background_change: bool | None  # None when either side is complex: unknown, not "same"
+    shared_painted_ancestor: str | None  # element painting behind both sides: continuity evidence
+    foreground_spans: bool  # content crosses the boundary line: evidence against a split
+
+
+class BoundaryCandidate(BaseModel):
+    id: str
+    level: int = Field(ge=0)
+    above_region_id: str
+    below_region_id: str
+    y: float = Field(allow_inf_nan=False)  # document-space boundary line, midway between the two boxes
+    box_gap: float = Field(allow_inf_nan=False)  # between the region boxes (negative: boxes overlap)
+    content_gap: float | None  # between foreground content extents; None when a side has no content
+    evidence: BoundaryEvidence
+    notes: list[str]
+
+
+class Overlap(BaseModel):
+    region_ids: tuple[str, str]
+    kind: Literal["overlay", "header_over_content", "content"]
+    area: float = Field(gt=0, allow_inf_nan=False)
+
+
+class PageStructure(BaseModel):
+    header_group_id: str | None
+    footer_group_id: str | None
+    main_group_id: str | None
+    notes: list[str]  # how each was found, including fallbacks
+
+
+class CandidateSnapshot(BaseModel):
+    schema_version: int = SCHEMA_VERSION
+    capture_id: str
+    candidates_version: str
+    structure: PageStructure
+    regions: list[RegionCandidate]
+    boundaries: list[BoundaryCandidate]
+    overlaps: list[Overlap]
+
+    @model_validator(mode="after")
+    def _check(self) -> "CandidateSnapshot":
+        ids = {r.id for r in self.regions}
+        if len(ids) != len(self.regions):
+            raise ValueError("duplicate region IDs")
+        refs = [r.parent_region_id for r in self.regions if r.parent_region_id]
+        refs += [i for b in self.boundaries for i in (b.above_region_id, b.below_region_id)]
+        refs += [i for o in self.overlaps for i in o.region_ids]
+        if missing := set(refs) - ids:
+            raise ValueError(f"unknown region IDs: {sorted(missing)}")
+        return self
