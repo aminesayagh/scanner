@@ -418,7 +418,11 @@ def evaluate(
     """
     if config is None and Path("detector.toml").is_file():
         config = Path("detector.toml")  # same default as `detect`, so a tuning loop measures what it tunes
-    base = DetectorConfig.model_validate(tomllib.loads(config.read_text())) if config else DetectorConfig()
+    try:
+        base = DetectorConfig.model_validate(tomllib.loads(config.read_text())) if config else DetectorConfig()
+    except (tomllib.TOMLDecodeError, ValidationError) as e:
+        console.print(f"[red]Invalid config {config}:[/] {escape_markup(str(e))}")
+        raise typer.Exit(2)
     console.print(f"[dim]Config: {config or 'built-in defaults'} — {base.model_dump(exclude={'mode'})}[/]")
     ann = Annotation.model_validate_json(annotation.read_text())
     snapshot = ElementSnapshot.model_validate_json((run / "elements.json").read_text())

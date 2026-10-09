@@ -82,3 +82,11 @@ def test_extra_sections_are_counted(base):
     _, elements, props = base
     r = evaluate(elements, props, ann(["Home"], ["Footer text"]))  # hero and features are unannotated
     assert len(r.extra_sections) == 2 and r.missed_boundaries == [] and r.false_splits == []
+
+
+def test_evaluate_rejects_an_invalid_config_cleanly(base, tmp_path):
+    out, *_ = base
+    bad = tmp_path / "bad.toml"
+    bad.write_text("full_width = 1.5\n")
+    result = CliRunner().invoke(app, ["evaluate", str(out), str(ANNOTATIONS / "normalize-base.json"), "--config", str(bad)])
+    assert result.exit_code == 2 and "Invalid config" in result.output

@@ -25,3 +25,18 @@ wireframe extraction needs to match sections across recaptures or page versions,
 Mobile layouts stack, hide and reorder content differently, so mobile sections need their own capture
 (`--width 390 --height 844`) and their own review. The pipeline already works per viewport. Linking the
 desktop and mobile versions of the same section is not built.
+
+## Blank areas the DOM reports as visible (deferred)
+
+Some scroll-driven effects move content off the painted page while the browser still reports it visible,
+with readable text (lingowp.com's "Stop putting translation off" section: about 1,900 px of blank
+screenshot). The hidden-content limitation only sees content captured with opacity 0 or
+`visibility: hidden`, so this case is not flagged. Catching it needs a pixel check on the screenshot
+(large uniform bands inside a section that the element data says hold content). Revisit if such pages
+matter for review.
+
+## Closed `<details>` content counts as visible (deferred)
+
+Content of a closed `<details>` element (e.g. a language dropdown) is not painted and not hit-testable,
+but is still reported visible. A rule "element absent from the browser's hit stack at its own centre"
+would catch it on the first screen. Small and low impact; revisit with the next visibility pass.
