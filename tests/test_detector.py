@@ -64,6 +64,22 @@ def test_gap_is_judged_relative_to_internal_spacing(tmp_path):
     assert "strong gap without independent support" in b.rules[-1]
 
 
+def test_spacing_is_measured_through_wrappers(tmp_path):
+    # Theme wrappers (narrowing containers, so normalization keeps them) put the rows three levels down;
+    # single-row containers are passed through, so the paragraphs' 40px spacing is measured. The
+    # heading + one paragraph side has a single gap: still unknown, not guessed.
+    narrow = "<div style='margin: 0 40px'>{}</div>"
+    wrap = lambda inner, style="": f"<div style='{style}'>{narrow.format(narrow.format(inner))}</div>"  # noqa: E731
+    p = lambda t, m=40: f"<p style='margin: 0 0 {m}px'>{t}</p>"  # noqa: E731
+    elements, _, cands, props = run_detector(capture_html(tmp_path, (
+        wrap(p("A one") + p("A two") + p("A three", 0), "margin-bottom: 80px")
+        + wrap("<h2 style='margin: 0 0 40px'>B heading</h2>" + p("B text", 0)))))
+    a, b_, b = boundary_between(elements, cands, props, "A one", "B text")
+    assert b.spacing_above.value == 40 and b.spacing_above.observations == 2
+    assert b.spacing_below.value is None and b.spacing_below.observations == 1
+    assert b.gap_ratio == pytest.approx(2) and b.decision == "keep" and a is b_
+
+
 def test_large_internal_hero_spacing_does_not_split_the_hero(tmp_path):
     # The hero's call-to-action panel is painted (narrower than the page), so the hero holds a level-1
     # candidate boundary across 240px of internal whitespace: a big gap, but no section transition.

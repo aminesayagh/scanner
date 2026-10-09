@@ -32,9 +32,11 @@ from .models import (
 )
 
 # Bump when decision rules change, so old proposals.json files stay identifiable.
-DETECTOR_VERSION = "1"
+DETECTOR_VERSION = "2"
 
-# Container levels that internal spacing is measured in: the region's groups and their children.
+# Stacking levels that internal spacing is measured in: the region's first stack of rows and the stacks
+# directly inside it. A container whose children form one row (a wrapper, or columns side by side) adds
+# no level, so wrapped sections are measured as deep as their first rows.
 SPACING_DEPTH = 2
 
 # CSS px: a blank-looking band of hidden elements at least this tall is recorded as a limitation.
@@ -74,11 +76,12 @@ def detect(
 
 
 def _internal_gaps(members: list[VisualGroup], by_id: dict[str, VisualGroup]) -> list[float]:
-    """Positive vertical gaps between consecutive rows of children, in the region's own containers and
-    the containers directly inside them: compact local groups, not every deeply nested detail.
+    """Positive vertical gaps between consecutive rows of children, in the region's first stacks of rows
+    and the stacks directly inside them: compact local groups, not every deeply nested detail.
 
     Only vertical gaps between stacked rows count: side-by-side children (horizontal gaps) are banded
-    into one row first, so button gaps never mix with paragraph spacing.
+    into one row first, so button gaps never mix with paragraph spacing. Single-row containers are
+    passed through without using up SPACING_DEPTH: theme wrappers would otherwise hide every row.
     """
     gaps, stack = [], [(g, 0) for g in members]
     while stack:
@@ -90,8 +93,9 @@ def _internal_gaps(members: list[VisualGroup], by_id: dict[str, VisualGroup]) ->
             top = min(k.bounds.y for k in below)
             if top - bottom > 0:
                 gaps.append(top - bottom)
-        if depth < SPACING_DEPTH - 1:
-            stack.extend((k, depth + 1) for k in kids)
+        level = depth + (len(rows) > 1)  # only a stack of rows is a new level
+        if level < SPACING_DEPTH:
+            stack.extend((k, level) for k in kids)
     return gaps
 
 
