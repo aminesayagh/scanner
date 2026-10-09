@@ -21,6 +21,8 @@ from . import export as export_mod
 from . import review as review_mod
 from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from .normalize import normalize
+from .breakpoints import BREAKPOINTS, site_runs
+from .breakpoints import merge as merge_breakpoints
 from .overlay import write_overlay
 from .report import describe_limitation, report_fingerprint, write_report
 
@@ -36,48 +38,63 @@ def main() -> None:
 @app.command()
 def capture(
     url: str,
-    output: Path = typer.Option(..., "--output", "-o", help="New run directory for this capture."),
-    width: int = typer.Option(1440, min=1, help="Viewport width in CSS pixels."),
-    height: int = typer.Option(900, min=1, help="Viewport height in CSS pixels."),
+    output: Path = typer.Option(..., "--output", "-o", help="New directory for this capture."),
+    width: int | None = typer.Option(None, min=1, help="Single viewport width (CSS px). Default: three breakpoints."),
+    height: int | None = typer.Option(None, min=1, help="Single viewport height (CSS px)."),
     scale: float = typer.Option(1.0, min=0.1, help="Device scale factor."),
     headed: bool = typer.Option(False, help="Show the browser window."),
     manual_ready: bool = typer.Option(
         False, help="Wait for you to press Enter before capturing (dismiss banners first). Needs --headed."
     ),
 ) -> None:
-    """Visit URL once and save a screenshot and manifest into the run directory."""
+    """Visit URL and save screenshots, elements and manifests.
+
+    By default the page is loaded three times, as a laptop, a tablet and a phone would load it, into
+    OUTPUT/laptop, OUTPUT/tablet and OUTPUT/mobile. --width/--height capture one viewport into OUTPUT.
+    """
     if not math.isfinite(scale):
         raise typer.BadParameter("must be a finite number.", param_hint="--scale")
     if manual_ready and not headed:
         raise typer.BadParameter("--manual-ready needs --headed so you can see the page.", param_hint="--manual-ready")
 
-    def wait_for_operator() -> None:
-        console.input("[bold]Prepare the page in the browser window, then press Enter to capture…[/]")
+    if width is None and height is None:
+        targets = [(bp, output / bp, b.width, b.height, b.device) for bp, b in BREAKPOINTS.items()]
+        if taken := [str(t[1]) for t in targets if (t[1] / "manifest.json").exists()]:
+            console.print(f"[red]Error:[/] already captured: {', '.join(taken)}; choose a new --output")
+            raise typer.Exit(2)
+    else:
+        targets = [(None, output, width or 1440, height or 900, None)]
 
-    # The spinner would hide the Enter prompt, so manual mode runs without it.
-    spinner = nullcontext() if manual_ready else console.status(f"Capturing {url}")
-    try:
-        with spinner:
-            m = run_capture(
-                url,
-                output,
-                width=width,
-                height=height,
-                scale=scale,
-                headed=headed,
-                wait_for_operator=wait_for_operator if manual_ready else None,
-            )
-    except FileExistsError as e:
-        console.print(f"[red]Error:[/] {e}")
-        raise typer.Exit(2)
+    failed = False
+    for bp, out, w, h, device in targets:
+        label = f"{bp} ({w}×{h})" if bp else f"{w}×{h}"
 
-    if m.status == "failed":
-        console.print(f"[red]Capture failed:[/] {(m.error or 'unknown error').splitlines()[0]}")
-        console.print(f"Details in {output / 'manifest.json'}")
+        def wait_for_operator(label=label) -> None:
+            console.input(f"[bold]{label}: prepare the page in the browser window, then press Enter to capture…[/]")
+
+        # The spinner would hide the Enter prompt, so manual mode runs without it.
+        spinner = nullcontext() if manual_ready else console.status(f"Capturing {url} as {label}")
+        try:
+            with spinner:
+                m = run_capture(
+                    url, out, width=w, height=h, scale=scale, headed=headed, device=device,
+                    wait_for_operator=wait_for_operator if manual_ready else None,
+                )
+        except FileExistsError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(2)
+        failed |= not _print_capture(m, out, label)
+    if failed:
         raise typer.Exit(1)
 
+
+def _print_capture(m, out: Path, label: str) -> bool:
+    if m.status == "failed":
+        console.print(f"[red]{label}: capture failed:[/] {escape_markup((m.error or 'unknown error').splitlines()[0])}")
+        console.print(f"Details in {out / 'manifest.json'}")
+        return False
     color = "green" if m.status == "complete" else "yellow"
-    console.print(f"[{color}]Capture {m.status}[/] → {output}  (id {m.capture_id})")
+    console.print(f"[{color}]{label}: capture {m.status}[/] → {out}  (id {m.capture_id})")
     if m.scroll and m.scroll.truncated_reason:
         console.print(f"[yellow]Scroll pass stopped early:[/] {m.scroll.truncated_reason}")
     if m.screenshot and not m.screenshot.layout_consistent:
@@ -85,6 +102,7 @@ def capture(
     timed_out = [k for k, v in m.readiness.model_dump(exclude={"manual"}).items() if v is False]
     if timed_out:
         console.print(f"[yellow]Readiness waits that timed out:[/] {', '.join(timed_out)}")
+    return True
 
 
 @app.command()
@@ -132,6 +150,15 @@ def detect(
     except (tomllib.TOMLDecodeError, ValidationError) as e:
         console.print(f"[red]Invalid config {config}:[/] {e}")
         raise typer.Exit(2)
+    if runs := site_runs(run):
+        for bp, path in runs.items():
+            console.rule(f"{bp}")
+            _detect_one(path, cfg, depth)
+        return
+    _detect_one(run, cfg, depth)
+
+
+def _detect_one(run: Path, cfg: DetectorConfig, depth: int) -> None:
     if not (run / "elements.json").exists():
         console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
         raise typer.Exit(2)
@@ -203,7 +230,27 @@ def report(
     run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory with proposals.json."),
     open_: bool = typer.Option(False, "--open", help="Open the report in a browser."),
 ) -> None:
-    """Write a self-contained HTML report of the sections (reviewed state if a review exists)."""
+    """Write a self-contained HTML report of the sections (reviewed state if a review exists).
+
+    For a three-breakpoint capture: one report per breakpoint, and the merged report.json in RUN.
+    """
+    if runs := site_runs(run):
+        missing = [str(p) for p in runs.values() if not (p / "proposals.json").exists()]
+        if missing:
+            console.print(f"[red]Error:[/] no proposals.json in {', '.join(missing)}; run `section-scan detect {run}` first.")
+            raise typer.Exit(2)
+        for bp, path in runs.items():
+            _report_one(path, open_=False)
+        doc = merge_breakpoints(runs)
+        (run / "report.json").write_text(doc.model_dump_json(indent=2, exclude_defaults=True))
+        console.print(f"Merged report → {run / 'report.json'}  ({len(doc.sections)} sections, {', '.join(runs)})")
+        if open_:
+            webbrowser.open((runs[next(iter(runs))] / "report.html").resolve().as_uri())
+        return
+    _report_one(run, open_)
+
+
+def _report_one(run: Path, open_: bool) -> None:
     if not (run / "proposals.json").exists():
         console.print(f"[red]Error:[/] {run} has no proposals.json; run `section-scan detect {run}` first.")
         raise typer.Exit(2)

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 SCHEMA_VERSION = 1
 
@@ -57,6 +57,7 @@ class Manifest(BaseModel):
     input_url: str
     final_url: str | None = None
     title: str | None = None  # document title at capture
+    device: str | None = None  # emulated Playwright device (user agent, mobile, touch); None = desktop
     description: str | None = None  # meta description (or og:description) at capture
     http_status: int | None = None
     captured_at: datetime
@@ -105,6 +106,7 @@ class Element(BaseModel):
     role: str | None  # explicit role attribute only; landmark tags are read from `tag`
     html_id: str | None = None  # the element's id attribute (scroll anchor); absent before extractor 3
     alt: str | None = None  # an img's alt attribute ("" = decorative); absent before extractor 5
+    path: str | None = None  # DOM path anchored on the nearest id, e.g. "#work>ul>li[3]"; absent before extractor 6
     text: str  # whitespace-collapsed own text (not descendants'), truncated
     # Untruncated text: the whole rendered text for h1-h6/p/li, own text otherwise. Absent before extractor 3.
     full_text: str | None = None
@@ -456,9 +458,12 @@ class ReportPosition(BaseModel):
 class MessageItem(BaseModel):
     model_config = {"extra": "forbid"}
 
+    _eid: str | None = PrivateAttr(None)  # source element (not exported): matches content across breakpoints
+
     # "text": any other text; "img": an image's alt text (decorative images, alt="", are left out)
     tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "text", "img"]
     text: str
+    hidden: list[str] = []  # breakpoints where this content is not shown (multi-breakpoint reports only)
 
 
 class MessageListItem(BaseModel):
@@ -471,6 +476,8 @@ class MessageListItem(BaseModel):
 
     tag: Literal["li"]
     children: list[MessageItem]
+    hidden: list[str] = []  # breakpoints where this content is not shown (multi-breakpoint reports only)
+    _eid: str | None = PrivateAttr(None)
 
 
 class MessageGroup(BaseModel):
@@ -484,6 +491,7 @@ class MessageGroup(BaseModel):
 
     tag: Literal["group", "ul", "ol"]
     children: list[MessageItem | MessageListItem]
+    hidden: list[str] = []  # breakpoints where none of the children is shown (multi-breakpoint reports only)
 
 
 class ReportSection(BaseModel):
@@ -503,3 +511,24 @@ class ReportDocument(BaseModel):
     title: str | None
     description: str | None
     sections: list[ReportSection]
+
+
+class SiteSection(BaseModel):
+    """A section across breakpoints: per-breakpoint position, and the breakpoints where it is not shown."""
+
+    id: str | None
+    position: dict[str, ReportPosition]  # breakpoint -> box; missing where the section is hidden
+    hidden: list[str]
+    flags: list[str]
+    role: Literal["header", "footer", "flow", "overlay"]
+    message: list[MessageItem | MessageListItem | MessageGroup]
+
+
+class SiteReportDocument(BaseModel):
+    """report.json for a multi-breakpoint capture."""
+
+    link: str
+    title: str | None
+    description: str | None
+    breakpoints: dict[str, Viewport]
+    sections: list[SiteSection]

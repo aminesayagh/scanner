@@ -40,20 +40,23 @@ ul { margin: 2px 0; padding-left: 18px; }
 """
 
 
+def section_rows(props: ProposalSnapshot, review: ReviewState | None):
+    """(id, label, role, status, bounds, ambiguous, notes, limitations) per region, and element members."""
+    if review is not None:
+        rows = [(r.id, r.label, r.role, r.status, r.bounds, r.ambiguous, r.notes, r.limitations) for r in review.regions]
+        return rows, {r.id: r.element_ids for r in review.regions}
+    rows = [(s.id, s.label, s.role, "proposed", s.bounds, s.ambiguous, s.notes, s.limitations) for s in props.sections]
+    return rows, {s.id: s.element_ids for s in props.sections}
+
+
 def write_report(run: Path, review: ReviewState | None) -> Path:
     manifest = Manifest.model_validate_json((run / "manifest.json").read_text())
     props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
     png = base64.b64encode((run / manifest.screenshot.path).read_bytes()).decode()
     css_width = manifest.screenshot.width_px / manifest.device_scale_factor  # scale from real pixel size
 
-    if review is not None:
-        rows = [(r.id, r.label, r.role, r.status, r.bounds, r.ambiguous, r.notes, r.limitations) for r in review.regions]
-        members = {r.id: r.element_ids for r in review.regions}
-        revision = review.revision
-    else:
-        rows = [(s.id, s.label, s.role, "proposed", s.bounds, s.ambiguous, s.notes, s.limitations) for s in props.sections]
-        members = {s.id: s.element_ids for s in props.sections}
-        revision = None
+    rows, members = section_rows(props, review)
+    revision = review.revision if review is not None else None
 
     boxes, items = [], []
     for n, (rid, label, role, status, b, ambiguous, notes, limits) in enumerate(rows, 1):
@@ -138,7 +141,7 @@ def _write_json(run: Path, manifest: Manifest, rows, members: dict[str, list[str
         description=manifest.description,
         sections=sections,
     )
-    (run / "report.json").write_text(doc.model_dump_json(indent=2))
+    (run / "report.json").write_text(doc.model_dump_json(indent=2, exclude_defaults=True))
 
 
 TEXT_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"}
@@ -153,7 +156,7 @@ def _message(element_ids: list[str], by_id) -> list[MessageItem | MessageListIte
     """
     entries = _by_branch(set(element_ids), by_id)
     if len(entries) == 1 and isinstance(entries[0], MessageGroup) and entries[0].tag == "group":
-        return list(entries[0].children)
+        return list(entries[0].children)  # same objects: their source elements stay attached
     return entries
 
 
@@ -196,15 +199,23 @@ def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem | MessageLi
             if e.tag == "li" and any(by_id[d].tag in TEXT_BLOCKS - {"li"} for d in inside if d in members):
                 parts = _leaf_items([c for c in e.child_ids if by_id[c].tag not in ("ul", "ol")], members, by_id)
                 if parts:
-                    items.append(MessageListItem(tag="li", children=parts))
+                    entry = MessageListItem(tag="li", children=parts)
+                    entry._eid = eid
+                    items.append(entry)
                 continue
         if e.tag == "img":
             if alt := (e.alt or "").strip():  # alt="" marks a decorative image
-                items.append(MessageItem(tag="img", text=" ".join(alt.split())))
+                items.append(_item("img", " ".join(alt.split()), eid))
             continue
         if text := _text_of(e):
-            items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
+            items.append(_item(e.tag if e.tag in TEXT_BLOCKS else "text", text, eid))
     return items
+
+
+def _item(tag: str, text: str, eid: str) -> MessageItem:
+    item = MessageItem(tag=tag, text=text)
+    item._eid = eid
+    return item
 
 
 def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageListItem | MessageGroup]:
@@ -238,7 +249,7 @@ def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageListItem |
         found = items(b)
         if len(found) == 1:
             item = found[0]
-            out.append(MessageItem(tag="p", text=item.text) if item.tag == "text" else item)
+            out.append(_item("p", item.text, item._eid) if item.tag == "text" else item)
         else:
             tag = by_id[b].tag if by_id[b].tag in ("ul", "ol") else "group"
             out.append(MessageGroup(tag=tag, children=found))

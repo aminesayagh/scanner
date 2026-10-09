@@ -18,6 +18,18 @@
 
   const rect = (r) => ({ x: r.left, y: r.top, width: r.width, height: r.height });
   const collapse = (t) => t.replace(/\s+/g, ' ').trim();
+  // Where the element sits in the DOM, anchored on the nearest ancestor with an id: e.g. "#work>ul>li[3]>h3".
+  // Siblings are counted per tag. Used to match the same slot across separate page loads.
+  const pathOf = (el) => {
+    const parts = [];
+    for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+      if (n.id) { parts.unshift('#' + n.id); break; }
+      let i = 0;
+      for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === n.tagName) i++;
+      parts.unshift(n.tagName.toLowerCase() + (i ? `[${i}]` : ''));
+    }
+    return parts.join('>');
+  };
   const ownFullText = (el) => {
     let t = '';
     for (const n of el.childNodes) if (n.nodeType === Node.TEXT_NODE) t += n.textContent;
@@ -204,6 +216,7 @@
       role: el.getAttribute('role'),
       html_id: el.id || null,
       alt: tag === 'img' ? el.getAttribute('alt') : null,
+      path: pathOf(el),
       text: LEAF.has(tag) ? '' : ownText(el),
       full_text: LEAF.has(tag) ? '' : TEXT_BLOCKS.has(tag) ? blockText(el) : ownFullText(el),
       box: contents ? 'contents' : 'normal',

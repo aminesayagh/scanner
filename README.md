@@ -44,6 +44,37 @@ and config always give the same ordered result.
 | `overlay DIR [--id …\|--group …\|--regions\|--sections]` | Diagnostic: draws elements, groups, regions or sections over the screenshot. |
 | `evaluate DIR ANNOTATION` | Compares the detector with container-only and gaps-only baselines (see `evaluation/README.md`); uses `./detector.toml` like `detect`. |
 
+## Three breakpoints
+
+`capture URL -o DIR` (without `--width`/`--height`) loads the page three times, as each device would:
+
+| Breakpoint | Viewport | Emulated device |
+|---|---|---|
+| laptop | 1440×900 | desktop browser |
+| tablet | 768×1024 | iPad Mini (user agent, touch, mobile mode) |
+| mobile | 390×844 | iPhone 13 (user agent, touch, mobile mode) |
+
+Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `review`, `overlay`, `export` and
+`evaluate` work on each. `detect DIR` and `report DIR` handle all three, and `report DIR` writes the merged
+`DIR/report.json`:
+
+- Sections follow the laptop layout, plus sections that exist only at smaller sizes, in their place.
+- Each section has `position` per breakpoint and `hidden`: the breakpoints where none of its content shows.
+- Each content entry has `hidden` when it is missing at some breakpoints (omitted when shown everywhere).
+
+**Matching content across loads:**
+
+1. **Same DOM slot** (a path such as `#work>ul>li[3]>h3`): same content, even with different text. This is
+   what keeps random content (a rotating testimonial) from being listed once per breakpoint.
+2. **Same tag and text in another slot** (a desktop nav link and the same link in the mobile menu): same
+   content.
+3. **Otherwise:** the content exists only at those breakpoints.
+
+**Limitations:**
+
+- Random content that also changes the page's structure between loads can still be mismatched.
+- Element `id`s generated anew on each load make DOM paths differ; matching then falls back to text.
+
 ## report.json
 
 A compact summary next to `report.html`, with sections top to bottom (excluded ones left out):

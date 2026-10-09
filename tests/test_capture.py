@@ -50,8 +50,9 @@ def test_navigation_failure_is_recorded_and_exits_nonzero(tmp_path):
     out = tmp_path / "run"
     result = CliRunner().invoke(app, ["capture", "http://127.0.0.1:9/", "--output", str(out)])
     assert result.exit_code == 1
-    assert "Capture failed" in result.output
-    assert json.loads((out / "manifest.json").read_text())["status"] == "failed"
+    assert "capture failed" in result.output
+    # Without --width/--height all three breakpoints are attempted, each recording its failure.
+    assert all(json.loads((out / bp / "manifest.json").read_text())["status"] == "failed" for bp in ("laptop", "tablet", "mobile"))
 
 
 def test_existing_capture_is_never_overwritten(tmp_path):
@@ -72,7 +73,7 @@ def test_manual_ready_requires_headed(tmp_path):
 def test_cli_success_reports_no_false_timeouts(tmp_path):
     result = CliRunner().invoke(app, ["capture", fixture_url("basic.html"), "-o", str(tmp_path / "r")])
     assert result.exit_code == 0, result.output
-    assert "Capture complete" in result.output
+    assert result.output.count("capture complete") == 3  # laptop, tablet, mobile
     assert "timed out" not in result.output
 
 

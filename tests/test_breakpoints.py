@@ -1,0 +1,101 @@
+import json
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from section_scan.cli import app
+from section_scan.models import Manifest, SiteReportDocument
+
+FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+def cli(*args):
+    return CliRunner().invoke(app, [str(a) for a in args])
+
+
+@pytest.fixture(scope="module")
+def site(tmp_path_factory):
+    out = tmp_path_factory.mktemp("site") / "responsive"
+    url = (FIXTURES / "responsive.html").resolve().as_uri()
+    assert cli("capture", url, "-o", out).exit_code == 0
+    assert cli("detect", out).exit_code == 0
+    result = cli("report", out)
+    assert result.exit_code == 0, result.output
+    doc = json.loads((out / "report.json").read_text())
+    SiteReportDocument.model_validate(doc)
+    return out, doc
+
+
+def by_id(doc, section_id):
+    return next(s for s in doc["sections"] if s["id"] == section_id)
+
+
+def items(section):
+    out = []
+    for e in section["message"]:
+        out += e.get("children", [e]) if e.get("tag") == "group" else [e]
+    return out
+
+
+def test_each_breakpoint_is_a_separate_device_load(site):
+    out, doc = site
+    devices = {bp: Manifest.model_validate_json((out / bp / "manifest.json").read_text()) for bp in ("laptop", "tablet", "mobile")}
+    assert {bp: (m.viewport.width, m.device) for bp, m in devices.items()} == {
+        "laptop": (1440, None), "tablet": (768, "iPad Mini"), "mobile": (390, "iPhone 13")}
+    assert len({m.capture_id for m in devices.values()}) == 3
+    assert set(doc["breakpoints"]) == {"laptop", "tablet", "mobile"}
+    assert doc["title"] == "Responsive" and doc["description"] == "Breakpoint cases."
+
+
+def test_sections_hidden_per_breakpoint(site):
+    _, doc = site
+    assert by_id(doc, "intro")["hidden"] == [] and set(by_id(doc, "intro")["position"]) == {"laptop", "tablet", "mobile"}
+    gallery = by_id(doc, "gallery")
+    assert gallery["hidden"] == ["mobile"] and set(gallery["position"]) == {"laptop", "tablet"}
+    app_section = by_id(doc, "app")
+    assert app_section["hidden"] == ["laptop", "tablet"] and set(app_section["position"]) == {"mobile"}
+    ids = [s["id"] for s in doc["sections"]]
+    assert ids.index("intro") < ids.index("app") < ids.index("contact")  # mobile-only section in its place
+
+
+def test_content_hidden_per_breakpoint(site):
+    _, doc = site
+    intro = {i["text"]: i for i in items(by_id(doc, "intro"))}
+    assert intro["Long desktop paragraph"]["hidden"] == ["mobile"]
+    assert "hidden" not in intro["Shown everywhere"]
+    header = {i["text"]: i for s in doc["sections"] if s["role"] == "header" for i in items(s)}
+    assert header["Menu"]["hidden"] == ["laptop", "tablet"]
+    assert header["Home"]["hidden"] == ["mobile"]
+
+
+def test_random_content_is_listed_once_not_hidden(site):
+    _, doc = site
+    quotes = [i for s in doc["sections"] for i in items(s) if i["text"].startswith("Quote ")]
+    assert len(quotes) == 1 and "hidden" not in quotes[0]  # three different texts, one slot
+
+
+def test_single_viewport_capture_still_works(tmp_path):
+    out = tmp_path / "single"
+    url = (FIXTURES / "responsive.html").resolve().as_uri()
+    assert cli("capture", url, "-o", out, "--width", "390", "--height", "844").exit_code == 0
+    assert (out / "manifest.json").exists() and not (out / "mobile").exists()
+
+
+def test_same_text_in_different_elements_is_one_content(site):
+    _, doc = site
+    header = [i for s in doc["sections"] if s["role"] == "header" for i in items(s)]
+    contact = [i for i in header if i["text"] == "Contact us"]
+    assert len(contact) == 1 and "hidden" not in contact[0]  # desktop nav link and mobile menu link
+
+
+def test_section_without_content_is_matched_not_duplicated(site):
+    _, doc = site
+    bands = [s for s in doc["sections"] if s["id"] == "band" or (not s["message"] and s["role"] == "flow")]
+    assert len(bands) == 1 and bands[0]["hidden"] == []
+
+
+def test_phone_user_agent_content_is_captured(site):
+    _, doc = site
+    intro = {i["text"]: i for i in items(by_id(doc, "intro"))}
+    assert intro["Open in the app"]["hidden"] == ["laptop", "tablet"]  # served only to the emulated iPhone

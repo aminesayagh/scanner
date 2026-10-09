@@ -1,0 +1,37 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Responsive</title>
+<meta name="description" content="Breakpoint cases.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin: 0; }
+  body { font: 16px sans-serif; background: rgb(255, 255, 255); }
+  section { padding: 40px; }
+  header { padding: 16px 40px; background: rgb(17, 102, 204); }
+  @media (max-width: 500px) { .desktop-only { display: none; } }
+  @media (min-width: 501px) { .mobile-only { display: none; } }
+</style></head>
+<body>
+<header>
+  <nav class="desktop-only"><a href="#">Home</a> <a href="#">Work</a> <a href="#">Contact us</a></nav>
+  <div class="mobile-only"><button>Menu</button> <a href="#">Contact us</a></div>
+</header>
+<main>
+  <section id="intro" style="background: rgb(255, 230, 230)">
+    <h1>Welcome</h1><p>Shown everywhere</p><p class="desktop-only">Long desktop paragraph</p><p id="quote">placeholder</p>
+  </section>
+  <section id="gallery" class="desktop-only" style="background: rgb(230, 255, 230)"><h2>Gallery</h2><p>Big images</p></section>
+  <section id="app" class="mobile-only" style="background: rgb(230, 230, 255)"><h2>Get the app</h2><p>Mobile download</p></section>
+  <section id="band" style="height: 160px; background: rgb(40, 40, 40)"></section>
+  <section id="contact" style="background: rgb(255, 255, 220)"><h2>Contact</h2><p>Write to us</p></section>
+</main>
+<footer style="padding: 40px"><p>Footer text</p></footer>
+<script>
+  // Content served by user agent, as sites detecting phones do (not by screen width).
+  if (/iPhone/.test(navigator.userAgent)) {
+    document.getElementById('intro').insertAdjacentHTML('beforeend', '<p>Open in the app</p>');
+  }
+  // A different quote on every load, as testimonial carousels often do.
+  document.getElementById('quote').textContent =
+    ['Quote A', 'Quote B', 'Quote C'][Math.floor(Math.random() * 3)] + ' ' + Math.random().toString(36).slice(2, 8);
+</script>
+</body></html>

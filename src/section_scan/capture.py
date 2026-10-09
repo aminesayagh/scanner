@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from .models import Browser, ElementSnapshot, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
 
 # Bump when browser_extract.js changes what it measures, so old element files stay identifiable.
-EXTRACTOR_VERSION = "5"
+EXTRACTOR_VERSION = "6"
 _EXTRACT = (Path(__file__).parent / "browser_extract.js").read_text()
 
 
@@ -84,8 +84,13 @@ def capture(
     headed: bool = False,
     wait_for_operator: Callable[[], None] | None = None,
     limits: Limits = Limits(),
+    device: str | None = None,
 ) -> Manifest:
-    """Capture one URL into out_dir. Browser failures and cancellations are recorded in manifest.json."""
+    """Capture one URL into out_dir. Browser failures and cancellations are recorded in manifest.json.
+
+    `device` names a Playwright device (e.g. "iPhone 13") whose user agent, mobile mode and touch are used,
+    so sites that serve different HTML to phones and tablets do so; width/height still set the viewport.
+    """
     if (out_dir / "manifest.json").exists():
         raise FileExistsError(f"{out_dir} already holds a capture; captures are immutable, choose a new --output")
 
@@ -104,7 +109,14 @@ def capture(
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=not headed)
             manifest.browser = Browser(name="chromium", version=browser.version, headless=not headed)
-            context = browser.new_context(viewport={"width": width, "height": height}, device_scale_factor=scale)
+            emulation = {}
+            if device:
+                d = p.devices[device]
+                emulation = {"user_agent": d["user_agent"], "is_mobile": d["is_mobile"], "has_touch": d["has_touch"]}
+            context = browser.new_context(
+                viewport={"width": width, "height": height}, device_scale_factor=scale, **emulation
+            )
+            manifest.device = device
             page = context.new_page()
             _run(page, url, out_dir, manifest, wait_for_operator, limits)
             browser.close()
