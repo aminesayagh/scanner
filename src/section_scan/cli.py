@@ -1,5 +1,7 @@
 import math
+import shlex
 import tomllib
+import webbrowser
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -12,9 +14,11 @@ from rich.tree import Tree
 from .capture import capture as run_capture
 from .candidates import generate
 from .detector import detect as detect_sections
-from .models import DetectorConfig, ElementSnapshot
+from . import review as review_mod
+from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from .normalize import normalize
 from .overlay import write_overlay
+from .report import report_revision, write_report
 
 app = typer.Typer(help="Capture a webpage, propose its major sections, review them, and export JSON.")
 console = Console()
@@ -187,3 +191,179 @@ def detect(
     if proposals.status != "ok":
         console.print(f"[yellow]Analysis {proposals.status}[/]")
     console.print(f"Candidates → {run / 'candidates.json'};  proposals → {run / 'proposals.json'}")
+
+
+@app.command()
+def report(
+    run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory with proposals.json."),
+    open_: bool = typer.Option(False, "--open", help="Open the report in a browser."),
+) -> None:
+    """Write a self-contained HTML report of the sections (reviewed state if a review exists)."""
+    if not (run / "proposals.json").exists():
+        console.print(f"[red]Error:[/] {run} has no proposals.json; run `section-scan detect {run}` first.")
+        raise typer.Exit(2)
+    path = write_report(run, review_mod.load(run))
+    console.print(f"Report written → {path}")
+    if open_:
+        webbrowser.open(path.resolve().as_uri())
+
+
+REVIEW_HELP = """Commands:
+  list                                   show regions and their status
+  inspect ID                             region details and the evidence behind its boundaries
+  rename ID LABEL                        name a region (keeps its confirmation)
+  merge ID ID                            merge two adjacent flow regions
+  split ID Y|BOUNDARY [crossing=above|below]    cut a flow region at a document y or candidate boundary
+  adjust ID [top=Y] [bottom=Y]           trim a flow region's empty edges
+  exclude ID                             leave a region (e.g. an overlay) out of the export
+  confirm ID | confirm all               confirm one region, or every retained region after `report`
+  undo                                   restore the previous revision
+  report                                 regenerate report.html for the current revision
+  finish                                 leave the review (progress is already saved)"""
+
+
+@app.command()
+def review(
+    run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory with proposals.json."),
+    command: list[str] = typer.Argument(None, help="Run one review command and exit; omit for interactive."),
+    restart: bool = typer.Option(False, "--restart", help="Archive the current review and start from the latest proposals."),
+) -> None:
+    """Inspect, correct and confirm the proposed sections. Every change is saved immediately."""
+    if not (run / "proposals.json").exists():
+        console.print(f"[red]Error:[/] {run} has no proposals.json; run `section-scan detect {run}` first.")
+        raise typer.Exit(2)
+    state = review_mod.load(run)
+    current = review_mod.proposal_revision(run)
+    if state is not None and state.proposal_revision != current:
+        if not restart:
+            console.print(
+                f"[yellow]The proposals changed since this review started ({state.proposal_revision} → {current}).[/]\n"
+                "Confirmed corrections are not carried over silently. Use --restart to archive this review "
+                "and review the new proposals."
+            )
+            raise typer.Exit(2)
+        console.print(f"Archived previous review → {review_mod.archive(run, state)}")
+        state = None
+    if state is None:
+        state = review_mod.start(run)
+        review_mod.save(run, state, None)
+        console.print(f"Started a review of {len(state.regions)} proposed regions.")
+
+    elements = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
+    if command:
+        _review_step(run, state, command, elements)
+        return
+    console.print(REVIEW_HELP)
+    _review_list(state)
+    while True:
+        try:
+            line = console.input(f"[bold]review r{state.revision}>[/] ")
+        except (EOFError, KeyboardInterrupt):
+            break
+        words = shlex.split(line) if line.strip() else []
+        if words and words[0] in ("finish", "quit", "exit"):
+            break
+        if words:
+            state = _review_step(run, state, words, elements)
+    outstanding = [r.id for r in state.regions if r.status == "proposed"]
+    console.print(f"Review saved at revision {state.revision}. Unconfirmed: {', '.join(outstanding) or 'none'}.")
+
+
+def _review_step(run: Path, state, words: list[str], elements: ElementSnapshot):
+    """Apply one command; on any error print it and keep the previous state."""
+    op, args = words[0], words[1:]
+    try:
+        if op == "help":
+            console.print(REVIEW_HELP)
+            return state
+        if op == "list":
+            _review_list(state)
+            return state
+        if op == "inspect":
+            _review_inspect(run, state, _one(args))
+            return state
+        if op == "undo":
+            state = review_mod.undo(run)
+            console.print(f"Restored revision {state.revision}.")
+            return state
+        if op == "report":
+            console.print(f"Report written → {write_report(run, state)}")
+            return state
+        if op == "rename" and len(args) >= 2:
+            new = review_mod.rename(state, args[0], " ".join(args[1:]))
+        elif op == "merge" and len(args) == 2:
+            new = review_mod.merge(state, *args)
+        elif op == "split" and len(args) in (2, 3):
+            crossing = None
+            if len(args) == 3:
+                if not args[2].startswith("crossing="):
+                    raise review_mod.ReviewError("usage: split ID Y|BOUNDARY [crossing=above|below]")
+                crossing = args[2].split("=", 1)[1]
+            y, at = _split_point(run, args[1])
+            new = review_mod.split(state, args[0], y, elements, crossing, at)
+        elif op == "adjust" and len(args) >= 2:
+            edges = dict(a.split("=", 1) for a in args[1:] if "=" in a)
+            if not edges or set(edges) - {"top", "bottom"}:
+                raise review_mod.ReviewError("usage: adjust ID [top=Y] [bottom=Y]")
+            new = review_mod.adjust(state, args[0], elements, **{k: float(v) for k, v in edges.items()})
+        elif op == "exclude":
+            new = review_mod.exclude(state, _one(args))
+        elif op == "confirm" and args == ["all"]:
+            new = review_mod.confirm_all(state, report_revision(run))
+        elif op == "confirm":
+            new = review_mod.confirm(state, _one(args))
+        else:
+            raise review_mod.ReviewError(f"unknown or malformed command {' '.join(words)!r}; try `help`")
+    except (review_mod.ReviewError, ValueError) as e:
+        console.print(f"[red]Not applied:[/] {e}")
+        return state
+    review_mod.save(run, new, state)
+    console.print(f"[green]Saved revision {new.revision}[/]: {new.corrections[-1].command}")
+    return new
+
+
+def _one(args: list[str]) -> str:
+    if len(args) != 1:
+        raise review_mod.ReviewError("expected exactly one region ID")
+    return args[0]
+
+
+def _split_point(run: Path, value: str) -> tuple[float, str]:
+    if value.startswith("b"):
+        props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
+        match = next((b for b in props.boundaries if b.id == value), None)
+        if match is None:
+            raise review_mod.ReviewError(f"no candidate boundary {value!r}")
+        return match.y, value
+    return float(value), ""
+
+
+def _review_list(state) -> None:
+    table = Table("ID", "Label", "Role", "Status", "y", "Height", "Flags")
+    colour = {"confirmed": "green", "excluded": "dim", "proposed": "yellow"}
+    for r in state.regions:
+        table.add_row(
+            r.id, r.label, r.role, f"[{colour[r.status]}]{r.status}[/]", f"{r.bounds.y:.0f}", f"{r.bounds.height:.0f}",
+            "ambiguous boundary" if r.ambiguous else "",
+        )
+    console.print(table)
+
+
+def _review_inspect(run: Path, state, rid: str) -> None:
+    _, r = review_mod._find(state, rid)
+    props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
+    sections = {s.id: s for s in props.sections}
+    boundaries = {b.id: b for b in props.boundaries}
+    console.print(f"[bold]{r.id}[/] {r.label} — {r.role}, {r.status}; y {r.bounds.y:.0f}–{r.bounds.y + r.bounds.height:.0f}, "
+                  f"{len(r.element_ids)} elements; from {', '.join(r.source_section_ids)}")
+    for note in r.notes:
+        console.print(f"  note: {note}")
+    for sid in r.source_section_ids:
+        s = sections.get(sid)
+        for side, bid in (("above", s.boundary_above_id if s else None), ("below", s.boundary_below_id if s else None)):
+            if bid and (b := boundaries.get(bid)):
+                ratio = "unknown" if b.gap_ratio is None else f"{b.gap_ratio:.2f}"
+                console.print(f"  boundary {side} {b.id}: [bold]{b.decision}[/] ({b.basis}), gap ratio {ratio}")
+                for label, xs in (("for", b.supporting), ("against", b.opposing), ("unknown", b.unknowns)):
+                    for x in xs:
+                        console.print(f"    {label}: {x}")

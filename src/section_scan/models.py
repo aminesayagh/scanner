@@ -317,3 +317,44 @@ class ProposalSnapshot(BaseModel):
     sections: list[SectionProposal]
     # Groups no section claims: the page root, wrappers opened or split across sections, loose layers.
     unassigned_group_ids: list[str]
+
+
+class ReviewRegion(BaseModel):
+    id: str
+    label: str
+    role: Literal["header", "footer", "flow", "overlay"]
+    status: Literal["proposed", "confirmed", "excluded"]
+    bounds: Rect
+    element_ids: list[str]
+    source_section_ids: list[str]  # proposal sections this region came from
+    ambiguous: bool  # came from an undecided proposal boundary
+    notes: list[str]  # corrections, manual boundaries and allocation decisions
+
+
+class ReviewOperation(BaseModel):
+    revision: int = Field(ge=1)  # the revision this operation produced
+    command: str
+    at: datetime
+
+
+class ReviewState(BaseModel):
+    """The user's corrections, kept apart from the automatic proposals (which review never changes)."""
+
+    schema_version: int = SCHEMA_VERSION
+    capture_id: str
+    proposal_revision: str  # fingerprint of the proposals.json this review started from
+    revision: int = Field(ge=0)
+    next_region_number: int = Field(ge=1)  # for IDs of regions created by merge/split
+    regions: list[ReviewRegion]
+    corrections: list[ReviewOperation]
+    confirmation_revision: int | None  # revision at which the whole list was confirmed
+
+    @model_validator(mode="after")
+    def _check(self) -> "ReviewState":
+        ids = [r.id for r in self.regions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate region IDs")
+        members = [e for r in self.regions for e in r.element_ids]
+        if len(members) != len(set(members)):
+            raise ValueError("an element belongs to more than one region")
+        return self
