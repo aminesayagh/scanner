@@ -22,7 +22,7 @@ from . import review as review_mod
 from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from .normalize import normalize
 from .overlay import write_overlay
-from .report import report_fingerprint, write_report
+from .report import describe_limitation, report_fingerprint, write_report
 
 app = typer.Typer(help="Capture a webpage, propose its major sections, review them, and export JSON.")
 console = Console()
@@ -184,6 +184,7 @@ def detect(
     sections = Table("Section", "Label", "Role", "y", "Height", "Regions", "Flags")
     for s in proposals.sections:
         flags = ["[yellow]ambiguous[/]"] if s.ambiguous else []
+        flags += [f"[yellow]hidden content {x.top:.0f}–{x.bottom:.0f}[/]" for x in s.limitations]
         flags += [f"overlaps {o} ({k})" for o, k in s.overlaps]
         sections.add_row(
             s.id, s.label, s.role, f"{s.bounds.y:.0f}", f"{s.bounds.height:.0f}", " ".join(s.region_ids),
@@ -355,10 +356,10 @@ def _review_list(state) -> None:
     table = Table("ID", "Label", "Role", "Status", "y", "Height", "Flags")
     colour = {"confirmed": "green", "excluded": "dim", "proposed": "yellow"}
     for r in state.regions:
+        flags = (["ambiguous boundary"] if r.ambiguous else []) + (["[yellow]hidden content[/]"] if r.limitations else [])
         table.add_row(
             escape_markup(r.id), escape_markup(r.label), r.role, f"[{colour[r.status]}]{r.status}[/]",
-            f"{r.bounds.y:.0f}", f"{r.bounds.height:.0f}",
-            "ambiguous boundary" if r.ambiguous else "",
+            f"{r.bounds.y:.0f}", f"{r.bounds.height:.0f}", "; ".join(flags),
         )
     console.print(table)
 
@@ -370,6 +371,8 @@ def _review_inspect(run: Path, state, rid: str) -> None:
     boundaries = {b.id: b for b in props.boundaries}
     console.print(f"[bold]{escape_markup(r.id)}[/] {escape_markup(r.label)} — {r.role}, {r.status}; y {r.bounds.y:.0f}–{r.bounds.y + r.bounds.height:.0f}, "
                   f"{len(r.element_ids)} elements; from {', '.join(r.source_section_ids)}")
+    for x in r.limitations:
+        console.print(f"  [yellow]limitation:[/] {describe_limitation(x)}")
     for note in r.notes:
         console.print(f"  note: {escape_markup(note)}")
     for sid in r.source_section_ids:

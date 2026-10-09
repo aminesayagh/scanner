@@ -50,6 +50,7 @@ def start(run: Path) -> ReviewState:
             source_section_ids=[s.id],
             ambiguous=s.ambiguous,
             notes=[],
+            limitations=s.limitations,
         )
         for s in props.sections
     ]
@@ -163,6 +164,7 @@ def merge(state: ReviewState, first: str, second: str) -> ReviewState:
         source_section_ids=a.source_section_ids + b.source_section_ids,
         ambiguous=False,
         notes=a.notes + b.notes + [f"merged from {a.id} and {b.id}"],
+        limitations=a.limitations + b.limitations,
     )
     regions = state.regions[:i] + [merged] + state.regions[j + 1 :]
     return _next(
@@ -226,12 +228,12 @@ def split(
         _changed(
             r, id=f"n{n}", label=f"{r.label} (upper)", element_ids=_ordered(upper, r),
             bounds=Rect(x=r.bounds.x, y=top, width=r.bounds.width, height=upper_bottom - top),
-            notes=r.notes + [note, *alloc],
+            notes=r.notes + [note, *alloc], limitations=[x for x in r.limitations if x.top < upper_bottom],
         ),
         _changed(
             r, id=f"n{n + 1}", label=f"{r.label} (lower)", element_ids=_ordered(lower, r),
             bounds=Rect(x=r.bounds.x, y=lower_top, width=r.bounds.width, height=bottom - lower_top),
-            notes=r.notes + [note],
+            notes=r.notes + [note], limitations=[x for x in r.limitations if x.bottom > lower_top],
         ),
     ]
     regions = state.regions[:i] + parts + state.regions[i + 1 :]

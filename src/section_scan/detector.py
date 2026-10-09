@@ -25,6 +25,7 @@ from .models import (
     ElementSnapshot,
     GroupSnapshot,
     ProposalSnapshot,
+    SectionLimitation,
     SectionProposal,
     SpacingEstimate,
     VisualGroup,
@@ -35,6 +36,10 @@ DETECTOR_VERSION = "1"
 
 # Container levels that internal spacing is measured in: the region's groups and their children.
 SPACING_DEPTH = 2
+
+# CSS px: a blank-looking band of hidden elements at least this tall is recorded as a limitation.
+# ponytail: structural constant; moves to detector.toml with the other constants.
+HIDDEN_MIN_HEIGHT = 300.0
 
 
 def detect(
@@ -48,6 +53,7 @@ def detect(
     boundaries = [_decide(b, regions, by_id, styles, config, page_width) for b in cands.boundaries]
     decided = {b.id: b for b in boundaries}
     sections, notes, unassigned = _assemble(cands, decided, by_id)
+    _flag_hidden_content(sections, elements, groups)
 
     status = "ok" if any(s.role == "flow" for s in sections) else "unsupported"
     if status == "unsupported":
@@ -399,6 +405,49 @@ def _leftovers(gid, covered, by_id) -> list[str]:
     if not (_subtree_ids([gid], by_id) & covered):
         return [gid]
     return [x for c in by_id[gid].child_ids for x in _leftovers(c, covered, by_id)]
+
+
+def _flag_hidden_content(sections: list[SectionProposal], elements: ElementSnapshot, groups: GroupSnapshot) -> None:
+    """Record bands of a flow section where content exists but was captured invisible.
+
+    Scroll-reveal effects leave elements rendered with opacity 0 (or visibility: hidden) until the page
+    is scrolled, so the screenshot shows a blank area. Within each vertical stretch of the section that
+    no visible content group covers, the hidden elements' extent is a band; one at least
+    HIDDEN_MIN_HEIGHT tall is recorded. Only flags: sections are not split or merged.
+    """
+    def hidden(v) -> bool:
+        # Tiny/offscreen elements are deliberate (screen-reader text), not unseen content.
+        transparent = v.opacity == 0 or v.css_visibility != "visible" or v.transparent_ancestor or v.collapsed_ancestor
+        return v.has_box and not v.visible and not v.tiny and not v.offscreen and transparent
+
+    # Fixed elements are measured where they sat at capture, so their y says nothing about a section.
+    spans = [(e.bounds.y, e.bounds.y + e.bounds.height) for e in elements.elements
+             if e.positioning != "fixed" and hidden(e.visibility)]
+    covered = sorted((g.bounds.y, g.bounds.y + g.bounds.height) for g in groups.groups
+                     if g.kind == "content" and g.positioning != "fixed")
+    for s in sections:
+        if s.role != "flow":
+            continue
+        top, bottom = s.bounds.y, s.bounds.y + s.bounds.height
+        # Stretches of the section between visible content.
+        gaps, y = [], top
+        for a, b in covered:
+            if a > y:
+                gaps.append((y, min(a, bottom)))
+            y = max(y, b)
+            if y >= bottom:
+                break
+        if y < bottom:
+            gaps.append((y, bottom))
+        for lo, hi in gaps:
+            inside = [(a, b) for a, b in spans if a < hi and b > lo]
+            if not inside:
+                continue
+            band = (max(lo, min(a for a, _ in inside)), min(hi, max(b for _, b in inside)))
+            if band[1] - band[0] >= HIDDEN_MIN_HEIGHT:
+                s.limitations.append(
+                    SectionLimitation(kind="hidden_content", top=band[0], bottom=band[1], element_count=len(inside))
+                )
 
 
 def _link_overlaps(sections: list[SectionProposal]) -> None:

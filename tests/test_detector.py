@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 from section_scan.candidates import generate
 from section_scan.capture import capture
 from section_scan.cli import app
-from section_scan.detector import detect
+from section_scan.detector import HIDDEN_MIN_HEIGHT, detect
 from section_scan.models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from section_scan.normalize import normalize
 
@@ -282,3 +282,62 @@ def test_detector_toml_in_working_directory_applies_by_default(tmp_path, monkeyp
     result = CliRunner().invoke(app, ["detect", str(out)])
     assert result.exit_code == 0 and "Using config detector.toml" in result.output
     assert ProposalSnapshot.model_validate_json((out / "proposals.json").read_text()).config.gap_ratio_threshold == 20.0
+
+
+def reveal_page(card_style: str) -> str:
+    """A tall section whose lower half is a stack of cards in `card_style`, between two plain sections.
+
+    With opacity 0 this is how scroll-reveal libraries leave content before it is scrolled into view.
+    """
+    card = ("<div style='height: 220px; margin-top: 40px; padding: 20px; background: rgb(230, 240, 255); "
+            f"{card_style}'><h3 style='margin: 0'>Card {{}}</h3><p>Card text</p></div>")
+    return (
+        "<section style='padding: 40px; background: rgb(250, 250, 250)'><h1>Intro</h1><p>Opening text</p></section>"
+        "<section style='padding: 40px; background: rgb(255, 255, 255)'>"
+        "<h2 style='margin: 0'>Steps</h2><p>Visible copy above the cards</p>"
+        # A hidden tooltip, a hidden layer behind visible text and screen-reader text: never limitations.
+        "<span style='opacity: 0; display: inline-block; height: 100px'>Tooltip</span>"
+        "<div style='position: relative'><div style='position: absolute; inset: 0; visibility: hidden'>Layer</div>"
+        + "".join(f"<p style='margin: 0 0 40px'>Covered line {n}</p>" for n in range(10))
+        + "</div><span style='position: absolute; width: 1px; height: 1px; overflow: hidden'>Screen reader</span>"
+        + "".join(card.format(n) for n in range(1, 4))
+        + "</section>"
+        "<section style='padding: 40px; background: rgb(240, 250, 240)'><h2>After</h2><p>Closing text</p></section>"
+    )
+
+
+def test_scroll_reveal_content_is_recorded_as_hidden_content(tmp_path):
+    elements, _, _, props = run_detector(capture_html(tmp_path / "hidden", reveal_page("opacity: 0")))
+    steps = section_of(elements, props, "Steps")
+    cards = [e.bounds for e in elements.elements if e.tag == "div" and e.visibility.opacity == 0]
+    (limit,) = steps.limitations
+    assert limit.kind == "hidden_content" and limit.element_count == 9  # 3 cards, each with a heading and text
+    # One band from the first hidden card to the last, the gaps between cards included.
+    assert (limit.top, limit.bottom) == (cards[0].y, cards[-1].y + cards[-1].height)
+    assert all(not s.limitations for s in props.sections if s is not steps)
+
+
+def test_page_without_hidden_content_gets_no_limitation(tmp_path):
+    # The same page with the cards shown: the hidden tooltip, layer and screen-reader text alone flag nothing.
+    elements, _, _, props = run_detector(capture_html(tmp_path, reveal_page("")))
+    layer = next(e for e in elements.elements if e.text == "Layer")
+    assert not layer.visibility.visible and layer.bounds.height >= HIDDEN_MIN_HEIGHT  # tall, but covered
+    assert props.status == "ok" and all(not s.limitations for s in props.sections)
+
+
+def test_hidden_content_is_shown_in_review_report_and_export(tmp_path):
+    out = capture_html(tmp_path, reveal_page("opacity: 0"))
+    assert CliRunner().invoke(app, ["detect", str(out)]).exit_code == 0
+    props = ProposalSnapshot.model_validate_json((out / "proposals.json").read_text())
+    steps = next(s for s in props.sections if s.limitations)
+    listed = CliRunner().invoke(app, ["review", str(out), "list"]).output
+    assert "hidden content" in listed
+    inspected = CliRunner().invoke(app, ["review", str(out), "inspect", steps.id]).output
+    assert "limitation: hidden content at y" in inspected and "not inspected, not empty" in inspected
+    assert CliRunner().invoke(app, ["report", str(out)]).exit_code == 0
+    html = (out / "report.html").read_text()
+    assert "hidden content at y" in html and "· hidden content" in html
+    exported = tmp_path / "draft.json"
+    assert CliRunner().invoke(app, ["export", str(out), "--draft", "-o", str(exported)]).exit_code == 0
+    regions = json.loads(exported.read_text())["regions"]
+    assert [r["limitations"] for r in regions if r["id"] == steps.id] == [[x.model_dump() for x in steps.limitations]]

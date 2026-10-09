@@ -21,14 +21,19 @@ def build(run: Path, draft: bool = False) -> ExportDocument:
     if state is None:
         if not draft:
             raise ExportError("nothing has been reviewed yet; run `review`, or export a --draft of the proposals")
-        rows = [(s.id, s.label, s.role, "proposed", s.bounds, s.element_ids, [s.id]) for s in props.sections]
+        rows = [
+            (s.id, s.label, s.role, "proposed", s.bounds, s.element_ids, [s.id], s.limitations) for s in props.sections
+        ]
     else:
         retained = [r for r in state.regions if r.status != "excluded"]
         outstanding = [r for r in retained if r.status != "confirmed"]
         if outstanding and not draft:
             listed = ", ".join(f"{r.id} ({r.label})" for r in outstanding)
             raise ExportError(f"{len(outstanding)} region(s) still need review: {listed}")
-        rows = [(r.id, r.label, r.role, r.status, r.bounds, r.element_ids, r.source_section_ids) for r in retained]
+        rows = [
+            (r.id, r.label, r.role, r.status, r.bounds, r.element_ids, r.source_section_ids, r.limitations)
+            for r in retained
+        ]
     if not rows and not draft:
         raise ExportError("every region is excluded; there is nothing to export")
     rows.sort(key=lambda row: row[4].y)  # `order` is top-to-bottom page order, overlays included
@@ -36,9 +41,9 @@ def build(run: Path, draft: bool = False) -> ExportDocument:
     regions = [
         ExportRegion(
             id=rid, order=i, label=label, role=role, status=status, bounds=bounds,
-            element_ids=elements, source_section_ids=sources, overlaps=[],
+            element_ids=elements, source_section_ids=sources, overlaps=[], limitations=limits,
         )
-        for i, (rid, label, role, status, bounds, elements, sources) in enumerate(rows)
+        for i, (rid, label, role, status, bounds, elements, sources, limits) in enumerate(rows)
     ]
     for i, a in enumerate(regions):  # explicit overlaps among what is exported
         for b in regions[i + 1 :]:

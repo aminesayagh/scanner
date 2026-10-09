@@ -77,6 +77,8 @@ These are experimental starting values, not validated constants. Unknown keys ar
   - iframe contents, closed shadow roots and canvas pixels;
   - nested scroll areas, recorded as `scroll_container`;
   - scroll-driven effects. Content that only appears while scrolling may be missing from the screenshot.
+    A tall band of a section holding only such invisible content is recorded on the section as a
+    `hidden_content` limitation.
 
   Uninspected areas are recorded as limitations, never treated as empty.
 - **Screenshots:** a full-page screenshot is evidence of one moment, not of every dynamic state.
