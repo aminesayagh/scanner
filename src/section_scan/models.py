@@ -104,6 +104,7 @@ class Element(BaseModel):
     tag: str
     role: str | None  # explicit role attribute only; landmark tags are read from `tag`
     html_id: str | None = None  # the element's id attribute (scroll anchor); absent before extractor 3
+    alt: str | None = None  # an img's alt attribute ("" = decorative); absent before extractor 5
     text: str  # whitespace-collapsed own text (not descendants'), truncated
     # Untruncated text: the whole rendered text for h1-h6/p/li, own text otherwise. Absent before extractor 3.
     full_text: str | None = None
@@ -455,7 +456,8 @@ class ReportPosition(BaseModel):
 class MessageItem(BaseModel):
     model_config = {"extra": "forbid"}
 
-    tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "text"]  # "text": any other visible text
+    # "text": any other text; "img": an image's alt text (decorative images, alt="", are left out)
+    tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "text", "img"]
     text: str
 
 

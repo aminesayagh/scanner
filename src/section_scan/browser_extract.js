@@ -203,6 +203,7 @@
     Object.assign(node, {
       role: el.getAttribute('role'),
       html_id: el.id || null,
+      alt: tag === 'img' ? el.getAttribute('alt') : null,
       text: LEAF.has(tag) ? '' : ownText(el),
       full_text: LEAF.has(tag) ? '' : TEXT_BLOCKS.has(tag) ? blockText(el) : ownFullText(el),
       box: contents ? 'contents' : 'normal',

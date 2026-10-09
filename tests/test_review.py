@@ -313,10 +313,14 @@ def test_report_json_message_lists_section_content_with_tags(run):
     cli("report", run)
     doc = json.loads((run / "report.json").read_text())
     contents = [s["message"] for s in doc["sections"]]
-    # A lone group is unwrapped: its items are the message.
-    hero = next(c for c in contents if {"tag": "h1", "text": "Hero title"} in c)
-    assert hero == [{"tag": "h1", "text": "Hero title"}, {"tag": "p", "text": "Hero copy"}]
+    # The hero's copy block and its image are sibling branches; the image counts by its alt text.
+    hero = next(c for c in contents if "Hero title" in json.dumps(c))
+    assert hero == [
+        {"tag": "group", "children": [{"tag": "h1", "text": "Hero title"}, {"tag": "p", "text": "Hero copy"}]},
+        {"tag": "img", "text": "Hero image"},
+    ]
     # A paragraph is one entry with its inline link; the link's text is not listed again.
+    # A group with no siblings is unwrapped: its items are the message.
     plain = next(c for c in contents if {"tag": "h2", "text": "Plain"} in c)
     assert plain == [{"tag": "h2", "text": "Plain"}, {"tag": "p", "text": "Plain text with a link."}]
     features = next(c for c in contents if {"tag": "h2", "text": "Features"} in c)
@@ -452,3 +456,28 @@ def test_report_json_list_items_keep_their_parts_including_collapsed_text(tmp_pa
     ]}
     assert {"tag": "p", "text": "Revealed by animation"} in message  # in the DOM, painted later
     assert "Screen reader only" not in json.dumps(message)
+
+
+def test_report_json_includes_image_alt_text_as_content(tmp_path):
+    svg = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'/>"
+    page = tmp_path / "images.html"
+    page.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Images</title></head>
+      <body style="margin: 0"><section style="padding: 40px">
+        <h2>Team</h2>
+        <img src="{svg}" width="40" height="40" alt="Portrait of   the founder">
+        <img src="{svg}" width="40" height="40" alt="">
+        <img src="{svg}" width="40" height="40">
+        <ul><li><h3>Project</h3><img src="{svg}" width="40" height="40" alt="Project screenshot"></li><li>Plain</li></ul>
+      </section>
+      <section style="padding: 40px; background: rgb(30, 30, 60); color: white"><h2>Next</h2></section>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    message = json.loads((out / "report.json").read_text())["sections"][0]["message"]
+    assert message[:2] == [{"tag": "h2", "text": "Team"}, {"tag": "img", "text": "Portrait of the founder"}]
+    assert message[2] == {"tag": "ul", "children": [
+        {"tag": "li", "children": [{"tag": "h3", "text": "Project"}, {"tag": "img", "text": "Project screenshot"}]},
+        {"tag": "li", "text": "Plain"},
+    ]}
+    assert len(message) == 3  # decorative (alt="") and alt-less images add nothing

@@ -81,6 +81,8 @@ A compact summary next to `report.html`, with sections top to bottom (excluded o
   A `group` with no siblings is unwrapped: its items become the message itself.
   A list item that holds headings or paragraphs of its own (a work entry: date, title, description) keeps
   them as its `children`: the only place a third level appears.
+- **Images:** an image's `alt` text is an entry `{ "tag": "img", "text": "…" }` in page order; decorative
+  images (`alt=""`) and images without `alt` are left out.
 - **What text counts:** the DOM text, including parts not painted at capture (a closed `<details>`,
   content waiting for an animation). Left out: elements removed with `display: none` (typically duplicate
   mobile menus) and screen-reader-only text.

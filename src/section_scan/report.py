@@ -198,6 +198,10 @@ def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem | MessageLi
                 if parts:
                     items.append(MessageListItem(tag="li", children=parts))
                 continue
+        if e.tag == "img":
+            if alt := (e.alt or "").strip():  # alt="" marks a decorative image
+                items.append(MessageItem(tag="img", text=" ".join(alt.split())))
+            continue
         if text := _text_of(e):
             items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
     return items
