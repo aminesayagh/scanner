@@ -136,7 +136,7 @@ def test_report_reflects_corrections_and_escapes_page_text(run):
     cli("report", run)
     html = (run / "report.html").read_text()
     assert "&lt;script&gt;alert(1)&lt;/script&gt; Pricing" in html and "<script>" not in html
-    assert 'name="review-revision" content="1"' in html
+    assert 'name="review-fingerprint"' in html
     assert "data:image/png;base64," in html and "http" not in html.split("<aside>")[0]  # self-contained
 
 
@@ -158,3 +158,75 @@ def test_interactive_session(run):
     assert result.exit_code == 0, result.output
     assert "Saved revision 1" in result.output and "Not applied" in result.output and "Restored revision 0" in result.output
     assert "Review saved at revision 0" in result.output
+
+
+def test_confirm_all_rejects_a_report_of_a_different_state_with_the_same_revision(run):
+    cli("review", run, "list")
+    a, b = flow_ids(run)[:2]
+    cli("review", run, "rename", a, "Hero")  # r1
+    cli("review", run, "report")  # report shows r1: "Hero" over two separate regions
+    cli("review", run, "undo")  # r0
+    cli("review", run, "merge", a, b)  # r1 again, different content
+    assert "Not applied" in cli("review", run, "confirm", "all").output
+    assert all(r.status != "confirmed" for r in state(run).regions)
+
+
+def test_merge_cannot_resurrect_excluded_content(run):
+    cli("review", run, "list")
+    a, b = flow_ids(run)[:2]
+    cli("review", run, "exclude", b)
+    assert "Not applied" in cli("review", run, "merge", a, b).output
+    assert next(r for r in state(run).regions if r.id == b).status == "excluded"
+
+
+@pytest.mark.parametrize("edit", ["split", "adjust"])
+def test_split_and_adjust_invalidate_confirmation(run, edit):
+    cli("review", run, "list")
+    elements = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
+    plain = next(e for e in elements.elements if e.text == "Plain")
+    target = next(r for r in state(run).regions if plain.id in r.element_ids)
+    cli("review", run, "confirm", target.id)
+    if edit == "split":
+        y = plain.bounds.y + plain.bounds.height  # exactly where the heading ends and its paragraph starts
+        assert cli("review", run, "split", target.id, y).exit_code == 0
+        changed = [r for r in state(run).regions if r.id.startswith("n")]
+    else:
+        assert cli("review", run, "adjust", target.id, f"top={target.bounds.y + 1}").exit_code == 0
+        changed = [r for r in state(run).regions if r.id == target.id]
+    assert changed and all(r.status == "proposed" for r in changed)
+
+
+def test_split_bounds_contain_allocated_content_and_stay_adjustable(run):
+    cli("review", run, "list")
+    elements = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
+    image = next(e for e in elements.elements if e.tag == "img")
+    hero = next(r for r in state(run).regions if image.id in r.element_ids)
+    y = image.bounds.y + image.bounds.height / 2
+    assert cli("review", run, "split", hero.id, y, "crossing=below").exit_code == 0
+    lower = next(r for r in state(run).regions if r.id == "n2")
+    assert lower.bounds.y <= image.bounds.y  # the receiving part holds the image it was given
+    bottom = lower.bounds.y + lower.bounds.height
+    assert cli("review", run, "adjust", "n2", f"bottom={bottom - 1}").exit_code == 0  # moving one edge only
+
+
+def test_markup_in_labels_is_shown_literally(run):
+    cli("review", run, "list")
+    cli("review", run, "rename", flow_ids(run)[0], "Deals [/b] [bold]x")
+    result = cli("review", run, "list")
+    assert result.exit_code == 0 and "[/b]" in result.output and "[bold]x" in result.output
+
+
+def test_stale_review_is_not_drawn_over_new_proposals(run):
+    cli("review", run, "list")
+    cli("review", run, "rename", flow_ids(run)[0], "Old label")
+    props = json.loads((run / "proposals.json").read_text())
+    props["notes"].append("rerun")
+    (run / "proposals.json").write_text(json.dumps(props))
+    result = cli("report", run)
+    assert "predates the current proposals" in result.output
+    assert "Old label" not in (run / "report.html").read_text()
+
+
+def test_interactive_unmatched_quote_does_not_end_the_session(run):
+    result = cli("review", run, input="rename s1 Bob's\nrename s1 Intro\nfinish\n")
+    assert result.exit_code == 0 and "Not applied" in result.output and "Saved revision 1" in result.output

@@ -8,6 +8,7 @@ from pathlib import Path
 import typer
 from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape as escape_markup
 from rich.table import Table
 from rich.tree import Tree
 
@@ -18,7 +19,7 @@ from . import review as review_mod
 from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from .normalize import normalize
 from .overlay import write_overlay
-from .report import report_revision, write_report
+from .report import report_fingerprint, write_report
 
 app = typer.Typer(help="Capture a webpage, propose its major sections, review them, and export JSON.")
 console = Console()
@@ -202,7 +203,12 @@ def report(
     if not (run / "proposals.json").exists():
         console.print(f"[red]Error:[/] {run} has no proposals.json; run `section-scan detect {run}` first.")
         raise typer.Exit(2)
-    path = write_report(run, review_mod.load(run))
+    state = review_mod.load(run)
+    if state is not None and state.proposal_revision != review_mod.proposal_revision(run):
+        console.print("[yellow]The review predates the current proposals; reporting the proposals only. "
+                      "Run `review --restart` to review them.[/]")
+        state = None
+    path = write_report(run, state)
     console.print(f"Report written → {path}")
     if open_:
         webbrowser.open(path.resolve().as_uri())
@@ -260,7 +266,11 @@ def review(
             line = console.input(f"[bold]review r{state.revision}>[/] ")
         except (EOFError, KeyboardInterrupt):
             break
-        words = shlex.split(line) if line.strip() else []
+        try:
+            words = shlex.split(line) if line.strip() else []
+        except ValueError as e:  # e.g. an unmatched quote
+            console.print(f"[red]Not applied:[/] {e}")
+            continue
         if words and words[0] in ("finish", "quit", "exit"):
             break
         if words:
@@ -309,16 +319,16 @@ def _review_step(run: Path, state, words: list[str], elements: ElementSnapshot):
         elif op == "exclude":
             new = review_mod.exclude(state, _one(args))
         elif op == "confirm" and args == ["all"]:
-            new = review_mod.confirm_all(state, report_revision(run))
+            new = review_mod.confirm_all(state, report_fingerprint(run))
         elif op == "confirm":
             new = review_mod.confirm(state, _one(args))
         else:
             raise review_mod.ReviewError(f"unknown or malformed command {' '.join(words)!r}; try `help`")
     except (review_mod.ReviewError, ValueError) as e:
-        console.print(f"[red]Not applied:[/] {e}")
+        console.print(f"[red]Not applied:[/] {escape_markup(str(e))}")
         return state
     review_mod.save(run, new, state)
-    console.print(f"[green]Saved revision {new.revision}[/]: {new.corrections[-1].command}")
+    console.print(f"[green]Saved revision {new.revision}[/]: {escape_markup(new.corrections[-1].command)}")
     return new
 
 
@@ -343,7 +353,8 @@ def _review_list(state) -> None:
     colour = {"confirmed": "green", "excluded": "dim", "proposed": "yellow"}
     for r in state.regions:
         table.add_row(
-            r.id, r.label, r.role, f"[{colour[r.status]}]{r.status}[/]", f"{r.bounds.y:.0f}", f"{r.bounds.height:.0f}",
+            escape_markup(r.id), escape_markup(r.label), r.role, f"[{colour[r.status]}]{r.status}[/]",
+            f"{r.bounds.y:.0f}", f"{r.bounds.height:.0f}",
             "ambiguous boundary" if r.ambiguous else "",
         )
     console.print(table)
@@ -354,10 +365,10 @@ def _review_inspect(run: Path, state, rid: str) -> None:
     props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
     sections = {s.id: s for s in props.sections}
     boundaries = {b.id: b for b in props.boundaries}
-    console.print(f"[bold]{r.id}[/] {r.label} — {r.role}, {r.status}; y {r.bounds.y:.0f}–{r.bounds.y + r.bounds.height:.0f}, "
+    console.print(f"[bold]{escape_markup(r.id)}[/] {escape_markup(r.label)} — {r.role}, {r.status}; y {r.bounds.y:.0f}–{r.bounds.y + r.bounds.height:.0f}, "
                   f"{len(r.element_ids)} elements; from {', '.join(r.source_section_ids)}")
     for note in r.notes:
-        console.print(f"  note: {note}")
+        console.print(f"  note: {escape_markup(note)}")
     for sid in r.source_section_ids:
         s = sections.get(sid)
         for side, bid in (("above", s.boundary_above_id if s else None), ("below", s.boundary_below_id if s else None)):
@@ -366,4 +377,4 @@ def _review_inspect(run: Path, state, rid: str) -> None:
                 console.print(f"  boundary {side} {b.id}: [bold]{b.decision}[/] ({b.basis}), gap ratio {ratio}")
                 for label, xs in (("for", b.supporting), ("against", b.opposing), ("unknown", b.unknowns)):
                     for x in xs:
-                        console.print(f"    {label}: {x}")
+                        console.print(f"    {label}: {escape_markup(x)}")

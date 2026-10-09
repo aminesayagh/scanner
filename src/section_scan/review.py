@@ -24,6 +24,15 @@ class ReviewError(ValueError):
 # --- persistence ----------------------------------------------------------------------------------
 
 
+def fingerprint(state: ReviewState) -> str:
+    """Identifies exactly what a report shows: the proposals and every region as reviewed.
+
+    Revision numbers repeat after undo or --restart; this does not, unless the content is identical.
+    """
+    content = state.proposal_revision + "".join(r.model_dump_json() for r in state.regions)
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
 def proposal_revision(run: Path) -> str:
     return hashlib.sha256((run / "proposals.json").read_bytes()).hexdigest()[:12]
 
@@ -139,6 +148,8 @@ def merge(state: ReviewState, first: str, second: str) -> ReviewState:
         raise ReviewError(f"{first} and {second} are not adjacent")
     if a.role != "flow" or b.role != "flow":
         raise ReviewError("only flow sections can be merged; header, footer and overlays stay separate")
+    if "excluded" in (a.status, b.status):
+        raise ReviewError("cannot merge an excluded region; undo the exclusion first")
     if i > j:
         (i, a), (j, b) = (j, b), (i, a)
     rid = f"n{state.next_region_number}"
@@ -205,14 +216,22 @@ def split(
         alloc.append(f"wrappers spanning the cut allocated to the upper part: {', '.join(wrappers)}")
     if spanning:
         alloc.append(f"content spanning the cut allocated {crossing}: {', '.join(spanning)}")
+    # The part that receives spanning content extends to contain it, so bounds always hold the members.
+    upper_bottom, lower_top = y, y
+    if spanning and crossing == "above":
+        upper_bottom = max(y, *(by_id[e].bounds.y + by_id[e].bounds.height for e in spanning))
+    if spanning and crossing == "below":
+        lower_top = min(y, *(by_id[e].bounds.y for e in spanning))
     parts = [
         _changed(
             r, id=f"n{n}", label=f"{r.label} (upper)", element_ids=_ordered(upper, r),
-            bounds=Rect(x=r.bounds.x, y=top, width=r.bounds.width, height=y - top), notes=r.notes + [note, *alloc],
+            bounds=Rect(x=r.bounds.x, y=top, width=r.bounds.width, height=upper_bottom - top),
+            notes=r.notes + [note, *alloc],
         ),
         _changed(
             r, id=f"n{n + 1}", label=f"{r.label} (lower)", element_ids=_ordered(lower, r),
-            bounds=Rect(x=r.bounds.x, y=y, width=r.bounds.width, height=bottom - y), notes=r.notes + [note],
+            bounds=Rect(x=r.bounds.x, y=lower_top, width=r.bounds.width, height=bottom - lower_top),
+            notes=r.notes + [note],
         ),
     ]
     regions = state.regions[:i] + parts + state.regions[i + 1 :]
@@ -229,14 +248,20 @@ def adjust(
     i, r = _find(state, rid)
     if r.role != "flow":
         raise ReviewError("adjust is supported for flow sections only")
-    new_top = r.bounds.y if top is None else top
-    new_bottom = r.bounds.y + r.bounds.height if bottom is None else bottom
+    old_top, old_bottom = r.bounds.y, r.bounds.y + r.bounds.height
+    new_top = old_top if top is None else top
+    new_bottom = old_bottom if bottom is None else bottom
+    if (new_top, new_bottom) == (old_top, old_bottom):
+        raise ReviewError("the edges are unchanged")
     if new_top >= new_bottom:
         raise ReviewError("top must be above bottom")
     by_id = {e.id: e for e in elements.elements}
     members = set(r.element_ids)
     content = [by_id[e].bounds for e in r.element_ids if not _is_wrapper(by_id[e], members)]
-    if content and (new_top > min(b.y for b in content) or new_bottom < max(b.y + b.height for b in content)):
+    # Only an edge that moves inward is checked against the content it would cut.
+    cuts_top = new_top > old_top and content and new_top > min(b.y for b in content)
+    cuts_bottom = new_bottom < old_bottom and content and new_bottom < max(b.y + b.height for b in content)
+    if cuts_top or cuts_bottom:
         raise ReviewError("the new edges would cut through the section's content; use split instead")
     for j, other in enumerate(state.regions):
         if other.role != "flow" or j == i:
@@ -268,12 +293,12 @@ def confirm(state: ReviewState, rid: str) -> ReviewState:
     return _next(state, f"confirm {rid}", regions)
 
 
-def confirm_all(state: ReviewState, report_revision: int | None) -> ReviewState:
-    """Confirm every retained region at once: only after the report for this exact revision was produced."""
-    if report_revision != state.revision:
+def confirm_all(state: ReviewState, report_fingerprint: str | None) -> ReviewState:
+    """Confirm every retained region at once: only if the latest report shows exactly this state."""
+    if report_fingerprint != fingerprint(state):
         raise ReviewError(
-            "regenerate and inspect the report first (`report`), so you confirm what you have seen "
-            f"(report is for revision {report_revision}, review is at {state.revision})"
+            "regenerate and inspect the report first (`report`), so you confirm what you have seen: "
+            "the current report does not show this exact review state"
         )
     regions = [r if r.status == "excluded" else r.model_copy(update={"status": "confirmed"}) for r in state.regions]
     return _next(state, "confirm all", regions, confirmation_revision=state.revision + 1)

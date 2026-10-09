@@ -9,6 +9,7 @@ from html import escape
 from pathlib import Path
 
 from .models import Manifest, ProposalSnapshot, ReviewState
+from .review import fingerprint
 
 _STYLE = """
 body { margin: 0; font: 14px system-ui, sans-serif; color: #222; display: flex; }
@@ -73,7 +74,7 @@ def write_report(run: Path, review: ReviewState | None) -> Path:
             f"<td>{ul(b.rules)}</td></tr>"
         )
 
-    meta = f'<meta name="review-revision" content="{revision}">' if revision is not None else ""
+    meta = f'<meta name="review-fingerprint" content="{fingerprint(review)}">' if review is not None else ""
     title = escape(f"Sections — {manifest.final_url or manifest.input_url}")
     html = f"""<!doctype html>
 <html><head><meta charset="utf-8">{meta}<title>{title}</title><style>{_STYLE}</style></head>
@@ -98,13 +99,13 @@ def write_report(run: Path, review: ReviewState | None) -> Path:
     return out
 
 
-def report_revision(run: Path) -> int | None:
-    """The review revision a report was generated from, or None (no report, or not from a review)."""
+def report_fingerprint(run: Path) -> str | None:
+    """Fingerprint of the review state the current report shows, or None (no report, or not from a review)."""
     path = run / "report.html"
     if not path.exists():
         return None
-    marker = '<meta name="review-revision" content="'
+    marker = '<meta name="review-fingerprint" content="'
     head = path.read_text()[:2000]
     if marker not in head:
         return None
-    return int(head.split(marker, 1)[1].split('"', 1)[0])
+    return head.split(marker, 1)[1].split('"', 1)[0]
