@@ -25,6 +25,9 @@ TOLERANCE = 2.0  # CSS px treated as touching / not crossing
 TOP_EDGE = 10.0  # a fallback header must start this close to the top
 HEADER_MAX_TOP = 200.0  # a header landmark must start within this distance of the top...
 HEADER_MAX_HEIGHT = 300.0  # ...and be at most this tall; otherwise it is content (often a hero)
+FOOTER_MAX_GAP = 100.0  # a footer landmark must end this close to the page bottom...
+FOOTER_MIN_WIDTH = 0.5  # ...and span at least this share of the page width
+DOMINANT_PAINT_HEIGHT = 0.5  # a painted descendant covering this share of a region's height colours it
 FULL_WIDTH = 0.9  # ...and span at least this share of the page width
 
 HEADER_LANDMARKS = {"header", "banner"}
@@ -65,11 +68,25 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
                 f"header: landmark {g.id} rejected (top {g.bounds.y:.0f}, height {g.bounds.height:.0f}); "
                 "treated as content, likely a hero"
             )
-    footer = next(
-        (g for g in reversed(groups.groups) if g.evidence.landmark in FOOTER_LANDMARKS and page_level(g)), None
-    )
+    # A page footer ends the page: in flow, near the bottom, and wide. A quote attribution or a footer
+    # inside a cookie dialog is not the page footer.
+    page_bottom = max(r.bounds.y + r.bounds.height for r in roots)
+    footer = None
+    for g in reversed(groups.groups):
+        if g.evidence.landmark in FOOTER_LANDMARKS and page_level(g):
+            b = g.bounds
+            if (
+                g.positioning in ("flow", "sticky")
+                and b.y + b.height >= page_bottom - FOOTER_MAX_GAP
+                and b.width >= FOOTER_MIN_WIDTH * page_width
+            ):
+                footer = g
+                notes.append(f"footer: landmark {g.id}")
+                break
+            notes.append(f"footer: landmark {g.id} rejected ({g.positioning}, bottom {b.y + b.height:.0f}, width {b.width:.0f})")
+    if footer is None:
+        notes.append("footer: none found")
     main = next((g for g in groups.groups if g.evidence.landmark == "main"), None)
-    notes.append(f"footer: landmark {footer.id}" if footer else "footer: no page-level footer landmark")
     notes.append(f"main: landmark {main.id}" if main else "main: no landmark; using the page's body children")
     contains_main = {main.id, *(a.id for a in ancestors(main))} if main else set()
 
@@ -83,12 +100,23 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
     # and a single wrapper spanning everything looked through.
     top = [by_id[c] for r in roots for c in r.child_ids] if len(roots) == 1 else roots
     items = [g for g in top if g.positioning in ("flow", "sticky") and g.bounds.height > 0 and g.id not in special]
-    seen = list(top)  # every group directly inside the wrappers walked through: fallback-header candidates
+    def opens_cleanly(g: VisualGroup) -> bool:
+        # Opening is safe unless main (or a wrapper of it) shares a row with siblings, e.g. a sidebar:
+        # flattening would mix the main column's sections with the sidebar.
+        return all(len(b) == 1 for b in _bands(flow_children(g)) if any(x.id in contains_main for x in b))
+
+    seen = list(top)  # every group directly inside the wrappers walked through
+    blocked: set[str] = set()
     while True:
-        if opened := [g for g in items if g.id in contains_main]:
+        holders = [g for g in items if g.id in contains_main and g.id not in blocked]
+        for g in holders:
+            if not opens_cleanly(g):
+                blocked.add(g.id)
+                notes.append(f"kept {g.id} whole: main shares a row with side content; main's regions are alternatives")
+        if opened := [g for g in holders if g.id not in blocked]:
             items = [k for g in items for k in (flow_children(g) if g in opened else [g])]
             notes.extend(f"opened {g.id}: holds the main landmark" for g in opened if g.id != main.id)
-        elif len(items) == 1 and flow_children(items[0]):
+        elif len(items) == 1 and flow_children(items[0]) and items[0].id not in blocked:
             opened = items
             notes.append(f"looked inside {items[0].id}: one wrapper spans the whole flow")
             items = flow_children(items[0])
@@ -102,7 +130,11 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
             (
                 g
                 for g in seen
-                if g.positioning != "flow" and g.bounds.y <= TOP_EDGE and g.bounds.width >= FULL_WIDTH * page_width
+                if g.positioning != "flow"
+                and g.bounds.y <= TOP_EDGE
+                and g.bounds.width >= FULL_WIDTH * page_width
+                and g.bounds.height <= HEADER_MAX_HEIGHT
+                and _content_boxes([g], by_id)
             ),
             None,
         )
@@ -111,6 +143,9 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
             items = [g for g in items if g.id != header.id]
         else:
             notes.append("header: none found")
+
+    special |= {header.id} if header else set()  # a fallback header leaves the flow too
+    loose = _content_boxes([g for g in seen if g.positioning == "absolute" and g.id not in special], by_id)
 
     regions: list[RegionCandidate] = []
     boundaries: list[BoundaryCandidate] = []
@@ -144,21 +179,27 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
 
     def link(pairs: list[RegionCandidate], level: int) -> None:
         for above, below in zip(pairs, pairs[1:]):
-            boundaries.append(_boundary(f"b{len(boundaries)}", level, above, below, by_id))
+            boundaries.append(_boundary(f"b{len(boundaries)}", level, above, below, by_id, loose))
 
-    link(flow, 0)
+    # 7. Header and footer get boundary records too, so the record does not depend on landmark use.
+    ends = [r for r in top_level if r.role in ("header", "footer")]
+    link([r for r in ends if r.role == "header"] + flow + [r for r in ends if r.role == "footer"], 0)
 
     # Level-1 alternatives: a region whose inside holds visibly distinct sub-regions stays one candidate,
     # but its inner boundaries are kept for inspection instead of being decided here.
     # ponytail: one nesting level; recurse further if real pages show regions nested deeper.
     for r in flow:
-        if len(r.group_ids) != 1:
+        holds_main = main is not None and any(i in contains_main for i in r.group_ids)
+        if holds_main:
+            kids = flow_children(main)  # the main column's regions, apart from any sidebar
+        elif len(r.group_ids) == 1:
+            kids = flow_children(by_id[r.group_ids[0]])
+        else:
             continue
-        kids = flow_children(by_id[r.group_ids[0]])
         while len(kids) == 1:
             kids = flow_children(kids[0])
         sub_bands = _bands(kids)
-        if len(sub_bands) >= 2 and _distinct(sub_bands):
+        if len(sub_bands) >= 2 and (holds_main or _distinct(sub_bands, by_id)):
             subs = [add_region("flow", b, 1, r.id, _band_note(b)) for b in sub_bands]
             link(subs, 1)
 
@@ -196,13 +237,21 @@ def _bands(items: list[VisualGroup]) -> list[list[VisualGroup]]:
     bands: list[list[VisualGroup]] = []
     bottom = None
     for g in sorted(items, key=lambda g: g.bounds.y):
-        if bands and g.bounds.y < bottom - TOLERANCE:
+        # Overlapping vertically but not side by side (e.g. a card pulled up by a negative margin) is a
+        # stacked overlap: it stays its own band, and the overlap is recorded.
+        if bands and g.bounds.y < bottom - TOLERANCE and all(_side_by_side(g, m) for m in bands[-1]):
             bands[-1].append(g)
             bottom = max(bottom, g.bounds.y + g.bounds.height)
         else:
             bands.append([g])
             bottom = g.bounds.y + g.bounds.height
     return bands
+
+
+def _side_by_side(a: VisualGroup, b: VisualGroup) -> bool:
+    a_left, a_right = a.bounds.x, a.bounds.x + a.bounds.width
+    b_left, b_right = b.bounds.x, b.bounds.x + b.bounds.width
+    return min(a_right, b_right) - max(a_left, b_left) <= TOLERANCE
 
 
 def _band_note(band: list[VisualGroup]) -> list[str]:
@@ -215,23 +264,41 @@ def _union(rects: list[Rect]) -> Rect:
     return Rect(x=left, y=top, width=right - left, height=bottom - top)
 
 
-def _effective_background(g: VisualGroup) -> str:
+def _dominant_paint(g: VisualGroup, by_id: dict[str, VisualGroup]) -> str | None:
+    """Paint of a descendant spanning (nearly) the region's width and most of its height, if any."""
+    stack = [by_id[c] for c in g.child_ids]
+    while stack:
+        d = stack.pop()
+        if d.positioning == "fixed":
+            continue
+        own = d.evidence.background.own
+        if (
+            own != "transparent"
+            and d.bounds.width >= FULL_WIDTH * g.bounds.width
+            and d.bounds.height >= DOMINANT_PAINT_HEIGHT * g.bounds.height
+        ):
+            return own
+        stack.extend(by_id[c] for c in d.child_ids)
+    return None
+
+
+def _effective_background(g: VisualGroup, by_id: dict[str, VisualGroup]) -> str:
     bg = g.evidence.background
     if bg.own != "transparent":
         return bg.own
-    return bg.context or "canvas"
+    return _dominant_paint(g, by_id) or bg.context or "canvas"
 
 
-def _band_background(band: list[VisualGroup]) -> str:
-    values = {_effective_background(g) for g in band}
+def _band_background(band: list[VisualGroup], by_id: dict[str, VisualGroup]) -> str:
+    values = {_effective_background(g, by_id) for g in band}
     return values.pop() if len(values) == 1 else "complex"
 
 
-def _distinct(bands: list[list[VisualGroup]]) -> bool:
+def _distinct(bands: list[list[VisualGroup]], by_id: dict[str, VisualGroup]) -> bool:
     """Whether sub-bands look like separate regions: their own landmarks, or different paint."""
     if any(g.evidence.landmark in REGION_LANDMARKS for band in bands for g in band):
         return True
-    return len({_band_background(b) for b in bands}) > 1
+    return len({_band_background(b, by_id) for b in bands}) > 1
 
 
 def _content_boxes(members: list[VisualGroup], by_id: dict[str, VisualGroup]) -> list[Rect]:
@@ -247,7 +314,7 @@ def _content_boxes(members: list[VisualGroup], by_id: dict[str, VisualGroup]) ->
     return boxes
 
 
-def _boundary(bid, level, above: RegionCandidate, below: RegionCandidate, by_id) -> BoundaryCandidate:
+def _boundary(bid, level, above: RegionCandidate, below: RegionCandidate, by_id, loose: list[Rect]) -> BoundaryCandidate:
     a_groups = [by_id[i] for i in above.group_ids]
     b_groups = [by_id[i] for i in below.group_ids]
     a_bottom = above.bounds.y + above.bounds.height
@@ -258,15 +325,20 @@ def _boundary(bid, level, above: RegionCandidate, below: RegionCandidate, by_id)
     content_gap = None
     if a_content and b_content:
         content_gap = min(r.y for r in b_content) - max(r.y + r.height for r in a_content)
-    spans = any(r.y + r.height > y + TOLERANCE for r in a_content) or any(r.y < y - TOLERANCE for r in b_content)
+    spans = (
+        any(r.y + r.height > y + TOLERANCE for r in a_content)
+        or any(r.y < y - TOLERANCE for r in b_content)
+        or any(r.y < y - TOLERANCE and r.y + r.height > y + TOLERANCE for r in loose)  # out-of-flow content
+    )
 
-    bg_a, bg_b = _band_background(a_groups), _band_background(b_groups)
+    bg_a, bg_b = _band_background(a_groups, by_id), _band_background(b_groups, by_id)
     change = None if "complex" in (bg_a, bg_b) else bg_a != bg_b
     # Every group on both sides is transparent over the same painted ancestor: its paint runs across.
     backgrounds = [g.evidence.background for g in a_groups + b_groups]
     contexts = {bg.context_element_id for bg in backgrounds}
     shared = None
-    if all(bg.own == "transparent" for bg in backgrounds) and len(contexts) == 1:
+    dominant = any(_dominant_paint(g, by_id) for g in a_groups + b_groups)
+    if all(bg.own == "transparent" for bg in backgrounds) and len(contexts) == 1 and not dominant:
         shared = contexts.pop()
 
     notes = []
