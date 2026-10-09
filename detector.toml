@@ -1,5 +1,43 @@
 # Section detector parameters. These are experimental starting points, not validated constants:
 # tune them against the evaluation fixtures and real captures, then record what you chose.
+# Every key is optional (the value shown is the default); unknown keys are rejected.
+# Lengths are CSS px; shares are fractions of a width or height, in (0, 1].
+
+# --- Structure ---------------------------------------------------------------------------------
+
+# Edges within this many px count as the same box (a wrapper with the same box adds nothing).
+geometry_tolerance = 2.0
+
+# Overlaps up to this many px count as touching, not crossing (rows, boundaries, overlaps).
+touch_tolerance = 2.0
+
+# Deepest level of nested alternative regions examined below a top-level region (at least 1).
+max_nesting = 3
+
+# A box spanning at least this share of the page (or region) width counts as full width.
+full_width = 0.9
+
+# A painted descendant covering at least this share of a region's height colours the region.
+dominant_paint_height = 0.5
+
+# --- Headers & footers -------------------------------------------------------------------------
+
+# A header landmark must start within this many px of the top...
+header_max_top = 200.0
+
+# ...and be at most this tall; otherwise it is content (often a hero). Also caps a fallback header.
+header_max_height = 300.0
+
+# A fallback header (a full-width bar that is not a landmark) must start this close to the top.
+top_edge = 10.0
+
+# A footer landmark must end within this many px of the page bottom...
+footer_max_gap = 100.0
+
+# ...and span at least this share of the page width.
+footer_min_width = 0.5
+
+# --- Spacing -----------------------------------------------------------------------------------
 
 # A content gap this many times the local spacing scale counts as a strong relative gap.
 gap_ratio_threshold = 3.0
@@ -9,3 +47,16 @@ fallback_spacing_floor = 16.0
 
 # Internal gaps a side needs before its spacing estimate is trusted.
 min_spacing_observations = 2
+
+# Stacking levels of rows that internal spacing is measured in (at least 1).
+spacing_depth = 2
+
+# --- Limitations -------------------------------------------------------------------------------
+
+# A band of content captured invisible (e.g. scroll-reveal) at least this tall is flagged.
+hidden_min_height = 300.0
+
+# --- Decisions ---------------------------------------------------------------------------------
+
+# "combined" (default); "container" or "gaps" run the evaluation baselines.
+mode = "combined"

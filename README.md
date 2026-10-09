@@ -60,15 +60,30 @@ and config always give the same ordered result.
 
 ## Tuning (`detector.toml`)
 
-| Key | Default | Meaning |
-|---|---|---|
-| `gap_ratio_threshold` | 3.0 | Content gap ÷ local spacing at or above this counts as a strong gap |
-| `fallback_spacing_floor` | 16 | Spacing floor in CSS px when no line height can be measured |
-| `min_spacing_observations` | 2 | Internal gaps a side needs before its spacing estimate counts |
-| `mode` | `combined` | `container` or `gaps` run the evaluation baselines |
+Lengths are CSS px; shares are fractions of a width or height, in (0, 1].
 
-These are experimental starting values, not validated constants. Unknown keys are rejected, and every
-`proposals.json` records the full effective configuration.
+| Group | Key | Default | Meaning |
+|---|---|---|---|
+| Structure | `geometry_tolerance` | 2 | Edges this close (px) count as the same box |
+| | `touch_tolerance` | 2 | Overlaps this small (px) count as touching, not crossing |
+| | `max_nesting` | 3 | Deepest level of nested alternative regions below a top-level region |
+| | `full_width` | 0.9 | Width share that counts as full width (fallback header, dominant paint, page-wide paint change) |
+| | `dominant_paint_height` | 0.5 | Height share a painted descendant needs to colour its region |
+| Headers & footers | `header_max_top` | 200 | A header landmark must start within this distance of the top... |
+| | `header_max_height` | 300 | ...and be at most this tall; otherwise it is content (often a hero) |
+| | `top_edge` | 10 | A fallback (non-landmark) header must start this close to the top |
+| | `footer_max_gap` | 100 | A footer landmark must end this close to the page bottom... |
+| | `footer_min_width` | 0.5 | ...and span at least this share of the page width |
+| Spacing | `gap_ratio_threshold` | 3.0 | Content gap ÷ local spacing at or above this counts as a strong gap |
+| | `fallback_spacing_floor` | 16 | Spacing floor in CSS px when no line height can be measured |
+| | `min_spacing_observations` | 2 | Internal gaps a side needs before its spacing estimate counts |
+| | `spacing_depth` | 2 | Stacking levels of rows that internal spacing is measured in |
+| Limitations | `hidden_min_height` | 300 | A band of invisible captured content this tall is flagged `hidden_content` |
+| Decisions | `mode` | `combined` | `container` or `gaps` run the evaluation baselines |
+
+These are experimental starting values, not validated constants. Out-of-range values and unknown keys
+are rejected. `groups.json`, `candidates.json` and `proposals.json` each record the full effective
+configuration.
 
 ## Limits
 

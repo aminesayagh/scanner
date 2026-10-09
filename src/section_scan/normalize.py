@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from .models import (
     Background,
+    DetectorConfig,
     Element,
     ElementSnapshot,
     GroupEvidence,
@@ -18,10 +19,6 @@ from .models import (
 
 # Bump when grouping rules change, so old groups.json files stay identifiable.
 NORMALIZER_VERSION = "1"
-
-# Edges within this many CSS px count as the same box.
-# ponytail: structural constant; promote to detector.toml if evaluation shows it needs tuning.
-GEOMETRY_TOLERANCE = 2.0
 
 LANDMARK_TAGS = {"header", "footer", "main", "nav", "aside", "section", "article", "form"}
 MEDIA_TAGS = {"img", "svg", "video", "audio", "picture", "canvas", "iframe", "object", "embed"}
@@ -39,7 +36,7 @@ class _Group:
     reasons: list[str] = field(default_factory=list)
 
 
-def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
+def normalize(snapshot: ElementSnapshot, config: DetectorConfig = DetectorConfig()) -> GroupSnapshot:
     by_id = {e.id: e for e in snapshot.elements}
     omitted: list[Omitted] = []
 
@@ -80,11 +77,11 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
             return []
 
         if len(child_groups) == 1:
-            keep = _reasons_to_keep(e, child_groups[0].primary)
+            keep = _reasons_to_keep(e, child_groups[0].primary, config)
             if not keep:
                 only = child_groups[0]
                 only.element_ids.append(e.id)
-                if e.parent_id is None and not _reasons_to_keep(only.primary, None):
+                if e.parent_id is None and not _reasons_to_keep(only.primary, None, config):
                     # The page root keeps its identity, so the root group is <body> however deep redundant
                     # wrappers go. A meaningful only-child (padding, paint, landmark) stays the root instead.
                     only.reasons.append(f"page root absorbed redundant wrapper {only.primary.id} <{only.primary.tag}>")
@@ -93,7 +90,7 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
                     only.reasons.append(f"absorbed wrapper {e.id} <{e.tag}>: same bounds, nothing of its own")
                 return [only]
         else:
-            keep = _reasons_to_keep(e, None) + [f"groups {len(child_groups)} children"]
+            keep = _reasons_to_keep(e, None, config) + [f"groups {len(child_groups)} children"]
         return [_Group("container", e, [e.id], child_groups, keep)]
 
     roots = build(snapshot.elements[0]) if snapshot.elements else []
@@ -111,7 +108,7 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
             element_ids=g.element_ids,
             bounds=g.primary.bounds,
             positioning=g.primary.positioning,
-            evidence=_evidence(g, by_id),
+            evidence=_evidence(g, by_id, config),
             reasons=g.reasons,
         )
         groups.append(vg)
@@ -121,7 +118,11 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
     for r in roots:
         emit(r, None)
     return GroupSnapshot(
-        capture_id=snapshot.capture_id, normalizer_version=NORMALIZER_VERSION, groups=groups, omitted=omitted
+        capture_id=snapshot.capture_id,
+        normalizer_version=NORMALIZER_VERSION,
+        config=config,
+        groups=groups,
+        omitted=omitted,
     )
 
 
@@ -168,17 +169,17 @@ def _landmark(e: Element) -> str | None:
     return e.role or (e.tag if e.tag in LANDMARK_TAGS else None)
 
 
-def _same_box(a: Element, b: Element) -> bool:
+def _same_box(a: Element, b: Element, tol: float) -> bool:
     ab, bb = a.bounds, b.bounds
     return (
-        abs(ab.x - bb.x) <= GEOMETRY_TOLERANCE
-        and abs(ab.y - bb.y) <= GEOMETRY_TOLERANCE
-        and abs(ab.x + ab.width - bb.x - bb.width) <= GEOMETRY_TOLERANCE
-        and abs(ab.y + ab.height - bb.y - bb.height) <= GEOMETRY_TOLERANCE
+        abs(ab.x - bb.x) <= tol
+        and abs(ab.y - bb.y) <= tol
+        and abs(ab.x + ab.width - bb.x - bb.width) <= tol
+        and abs(ab.y + ab.height - bb.y - bb.height) <= tol
     )
 
 
-def _reasons_to_keep(e: Element, only_child: Element | None) -> list[str]:
+def _reasons_to_keep(e: Element, only_child: Element | None, config: DetectorConfig) -> list[str]:
     """Why `e` matters on its own. Empty means it is a redundant wrapper around `only_child`."""
     reasons = []
     if landmark := _landmark(e):
@@ -193,12 +194,12 @@ def _reasons_to_keep(e: Element, only_child: Element | None) -> list[str]:
         reasons.append(f"positioned {e.styles['position']}")
     if "scroll_container" in e.limitations:
         reasons.append("scroll container")
-    if only_child is not None and not _same_box(e, only_child):
+    if only_child is not None and not _same_box(e, only_child, config.geometry_tolerance):
         reasons.append("bounds differ from its only child")
     return reasons
 
 
-def _evidence(g: _Group, by_id: dict[str, Element]) -> GroupEvidence:
+def _evidence(g: _Group, by_id: dict[str, Element], config: DetectorConfig) -> GroupEvidence:
     e = g.primary
     context_id, context = None, None
     parent = by_id.get(e.parent_id) if e.parent_id else None
@@ -213,7 +214,7 @@ def _evidence(g: _Group, by_id: dict[str, Element]) -> GroupEvidence:
         len(containers) >= 2
         and len(containers) == len(g.children)
         and len({c.tag for c in containers}) == 1
-        and max(c.bounds.width for c in containers) - min(c.bounds.width for c in containers) <= GEOMETRY_TOLERANCE
+        and max(c.bounds.width for c in containers) - min(c.bounds.width for c in containers) <= config.geometry_tolerance
         and len({round(c.bounds.x) for c in containers}) >= 2
     )
     return GroupEvidence(

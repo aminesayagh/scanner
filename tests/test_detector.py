@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from typer.testing import CliRunner
 from section_scan.candidates import generate
 from section_scan.capture import capture
 from section_scan.cli import app
-from section_scan.detector import HIDDEN_MIN_HEIGHT, detect
+from section_scan.detector import detect
 from section_scan.models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from section_scan.normalize import normalize
 
@@ -215,6 +216,23 @@ def test_config_changes_outcome_and_is_recorded(tmp_path):
     assert result.exit_code == 2 and "Invalid config" in result.output
 
 
+@pytest.mark.parametrize(
+    "line", ["full_width = 1.5", "max_nesting = 0", "geometry_tolerance = -1.0", "hidden_min_height = nan",
+             "spacing_depth = 1.5", "footer_min_width = 0.0"],
+)
+def test_out_of_range_config_is_rejected(tmp_path, line):
+    cfg = tmp_path / "detector.toml"
+    cfg.write_text(line + "\n")
+    result = CliRunner().invoke(app, ["detect", str(tmp_path), "--config", str(cfg)])
+    assert result.exit_code == 2 and "Invalid config" in result.output, result.output
+
+
+def test_shipped_config_lists_every_key_at_its_default():
+    shipped = tomllib.loads((Path(__file__).parent.parent / "detector.toml").read_text())
+    assert set(shipped) == set(DetectorConfig.model_fields)
+    assert DetectorConfig.model_validate(shipped) == DetectorConfig()
+
+
 def test_detection_is_repeatable(tmp_path):
     out = capture_html(tmp_path, two_blocks(160, inner_px=16, extra_a="; padding: 40px", extra_b="padding: 40px"))
     runs = []
@@ -355,7 +373,7 @@ def test_page_without_hidden_content_gets_no_limitation(tmp_path):
     # The same page with the cards shown: the hidden tooltip, layer and screen-reader text alone flag nothing.
     elements, _, _, props = run_detector(capture_html(tmp_path, reveal_page("")))
     layer = next(e for e in elements.elements if e.text == "Layer")
-    assert not layer.visibility.visible and layer.bounds.height >= HIDDEN_MIN_HEIGHT  # tall, but covered
+    assert not layer.visibility.visible and layer.bounds.height >= DetectorConfig().hidden_min_height  # tall, but covered
     assert props.status == "ok" and all(not s.limitations for s in props.sections)
 
 

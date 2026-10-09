@@ -9,6 +9,7 @@ from .models import (
     BoundaryCandidate,
     BoundaryEvidence,
     CandidateSnapshot,
+    DetectorConfig,
     GroupSnapshot,
     Overlap,
     PageStructure,
@@ -20,17 +21,6 @@ from .models import (
 # Bump when candidate rules change, so old candidates.json files stay identifiable.
 CANDIDATES_VERSION = "1"
 
-# ponytail: structural constant; promote to detector.toml if evaluation shows it needs tuning.
-TOLERANCE = 2.0  # CSS px treated as touching / not crossing
-TOP_EDGE = 10.0  # a fallback header must start this close to the top
-HEADER_MAX_TOP = 200.0  # a header landmark must start within this distance of the top...
-HEADER_MAX_HEIGHT = 300.0  # ...and be at most this tall; otherwise it is content (often a hero)
-FOOTER_MAX_GAP = 100.0  # a footer landmark must end this close to the page bottom...
-FOOTER_MIN_WIDTH = 0.5  # ...and span at least this share of the page width
-DOMINANT_PAINT_HEIGHT = 0.5  # a painted descendant covering this share of a region's height colours it
-FULL_WIDTH = 0.9  # ...and span at least this share of the page width
-MAX_NESTING = 3  # deepest level of nested alternatives below a top-level region
-
 HEADER_LANDMARKS = {"header", "banner"}
 FOOTER_LANDMARKS = {"footer", "contentinfo"}
 # Landmarks that make a nested header/footer belong to their content rather than to the page.
@@ -39,12 +29,12 @@ SECTIONING = {"main", "article", "section", "aside", "header", "banner", "footer
 REGION_LANDMARKS = {"section", "article", "aside", "header", "footer", "region"}
 
 
-def generate(groups: GroupSnapshot) -> CandidateSnapshot:
+def generate(groups: GroupSnapshot, config: DetectorConfig = DetectorConfig()) -> CandidateSnapshot:
     by_id = {g.id: g for g in groups.groups}
     notes: list[str] = []
     roots = [g for g in groups.groups if g.parent_id is None]
     if not roots:
-        return _empty(groups, "no visual groups: nothing to analyse")
+        return _empty(groups, config, "no visual groups: nothing to analyse")
     if len(roots) > 1:
         notes.append(f"{len(roots)} root groups (page root had no visible box); treated as one page")
     page_width = max(r.bounds.width for r in roots)
@@ -61,7 +51,7 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
     header = None
     for g in groups.groups:
         if g.evidence.landmark in HEADER_LANDMARKS and page_level(g):
-            if g.bounds.y <= HEADER_MAX_TOP and g.bounds.height <= HEADER_MAX_HEIGHT:
+            if g.bounds.y <= config.header_max_top and g.bounds.height <= config.header_max_height:
                 header = g
                 notes.append(f"header: landmark {g.id}")
                 break
@@ -78,8 +68,8 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
             b = g.bounds
             if (
                 g.positioning in ("flow", "sticky")
-                and b.y + b.height >= page_bottom - FOOTER_MAX_GAP
-                and b.width >= FOOTER_MIN_WIDTH * page_width
+                and b.y + b.height >= page_bottom - config.footer_max_gap
+                and b.width >= config.footer_min_width * page_width
             ):
                 footer = g
                 notes.append(f"footer: landmark {g.id}")
@@ -104,7 +94,7 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
     def opens_cleanly(g: VisualGroup) -> bool:
         # Opening is safe unless main (or a wrapper of it) shares a row with siblings, e.g. a sidebar:
         # flattening would mix the main column's sections with the sidebar.
-        return all(len(b) == 1 for b in _bands(flow_children(g)) if any(x.id in contains_main for x in b))
+        return all(len(b) == 1 for b in _bands(flow_children(g), config) if any(x.id in contains_main for x in b))
 
     seen = list(top)  # every group directly inside the wrappers walked through
     blocked: set[str] = set()
@@ -132,9 +122,9 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
                 g
                 for g in seen
                 if g.positioning != "flow"
-                and g.bounds.y <= TOP_EDGE
-                and g.bounds.width >= FULL_WIDTH * page_width
-                and g.bounds.height <= HEADER_MAX_HEIGHT
+                and g.bounds.y <= config.top_edge
+                and g.bounds.width >= config.full_width * page_width
+                and g.bounds.height <= config.header_max_height
                 and _content_boxes([g], by_id)
             ),
             None,
@@ -166,7 +156,7 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
 
     if header:
         add_region("header", [header])
-    flow = [add_region("flow", band, note=_band_note(band)) for band in _bands(items)]
+    flow = [add_region("flow", band, note=_band_note(band)) for band in _bands(items, config)]
     if footer:
         add_region("footer", [footer])
     covered = {g.id for g in (header, footer) if g}
@@ -180,7 +170,7 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
 
     def link(pairs: list[RegionCandidate], level: int) -> None:
         for above, below in zip(pairs, pairs[1:]):
-            boundaries.append(_boundary(f"b{len(boundaries)}", level, above, below, by_id, loose))
+            boundaries.append(_boundary(f"b{len(boundaries)}", level, above, below, by_id, loose, config))
 
     # 7. Header and footer get boundary records too, so the record does not depend on landmark use.
     ends = [r for r in top_level if r.role in ("header", "footer")]
@@ -188,10 +178,10 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
 
     # Nested alternatives: a region whose inside holds visibly distinct sub-regions stays one candidate,
     # but its inner boundaries are kept for inspection instead of being decided here. Each sub-region is
-    # examined the same way, down to MAX_NESTING; breadth-first, so shallower regions keep lower IDs.
+    # examined the same way, down to config.max_nesting; breadth-first, so shallower regions keep lower IDs.
     queue = [(r, 0) for r in flow]
     for r, level in queue:
-        if level >= MAX_NESTING:
+        if level >= config.max_nesting:
             continue
         holds_main = main is not None and any(i in contains_main for i in r.group_ids)
         if holds_main:
@@ -202,8 +192,8 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
             continue
         while len(kids) == 1:
             kids = flow_children(kids[0])
-        sub_bands = _bands(kids)
-        if len(sub_bands) >= 2 and (holds_main or _distinct(sub_bands, by_id)):
+        sub_bands = _bands(kids, config)
+        if len(sub_bands) >= 2 and (holds_main or _distinct(sub_bands, by_id, config)):
             subs = [add_region("flow", b, level + 1, r.id, _band_note(b)) for b in sub_bands]
             link(subs, level + 1)
             queue += [(s, level + 1) for s in subs]
@@ -211,6 +201,7 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
     return CandidateSnapshot(
         capture_id=groups.capture_id,
         candidates_version=CANDIDATES_VERSION,
+        config=config,
         structure=PageStructure(
             header_group_id=header.id if header else None,
             footer_group_id=footer.id if footer else None,
@@ -219,14 +210,15 @@ def generate(groups: GroupSnapshot) -> CandidateSnapshot:
         ),
         regions=regions,
         boundaries=boundaries,
-        overlaps=_overlaps(top_level),
+        overlaps=_overlaps(top_level, config.touch_tolerance),
     )
 
 
-def _empty(groups: GroupSnapshot, note: str) -> CandidateSnapshot:
+def _empty(groups: GroupSnapshot, config: DetectorConfig, note: str) -> CandidateSnapshot:
     return CandidateSnapshot(
         capture_id=groups.capture_id,
         candidates_version=CANDIDATES_VERSION,
+        config=config,
         structure=PageStructure(header_group_id=None, footer_group_id=None, main_group_id=None, notes=[note]),
         regions=[],
         boundaries=[],
@@ -234,17 +226,18 @@ def _empty(groups: GroupSnapshot, note: str) -> CandidateSnapshot:
     )
 
 
-def _bands(items: list[VisualGroup]) -> list[list[VisualGroup]]:
+def _bands(items: list[VisualGroup], config: DetectorConfig) -> list[list[VisualGroup]]:
     """Siblings whose vertical extents overlap share a row and form one band (e.g. a two-column layout).
 
     Only siblings are compared, so columns elsewhere on the page cannot interleave with them.
     """
     bands: list[list[VisualGroup]] = []
     bottom = None
+    tol = config.touch_tolerance
     for g in sorted(items, key=lambda g: g.bounds.y):
         # Overlapping vertically but not side by side (e.g. a card pulled up by a negative margin) is a
         # stacked overlap: it stays its own band, and the overlap is recorded.
-        if bands and g.bounds.y < bottom - TOLERANCE and all(_side_by_side(g, m) for m in bands[-1]):
+        if bands and g.bounds.y < bottom - tol and all(_side_by_side(g, m, tol) for m in bands[-1]):
             bands[-1].append(g)
             bottom = max(bottom, g.bounds.y + g.bounds.height)
         else:
@@ -253,10 +246,10 @@ def _bands(items: list[VisualGroup]) -> list[list[VisualGroup]]:
     return bands
 
 
-def _side_by_side(a: VisualGroup, b: VisualGroup) -> bool:
+def _side_by_side(a: VisualGroup, b: VisualGroup, tol: float) -> bool:
     a_left, a_right = a.bounds.x, a.bounds.x + a.bounds.width
     b_left, b_right = b.bounds.x, b.bounds.x + b.bounds.width
-    return min(a_right, b_right) - max(a_left, b_left) <= TOLERANCE
+    return min(a_right, b_right) - max(a_left, b_left) <= tol
 
 
 def _band_note(band: list[VisualGroup]) -> list[str]:
@@ -269,7 +262,7 @@ def _union(rects: list[Rect]) -> Rect:
     return Rect(x=left, y=top, width=right - left, height=bottom - top)
 
 
-def _dominant_paint(g: VisualGroup, by_id: dict[str, VisualGroup]) -> str | None:
+def _dominant_paint(g: VisualGroup, by_id: dict[str, VisualGroup], config: DetectorConfig) -> str | None:
     """Paint of a descendant spanning (nearly) the region's width and most of its height, if any."""
     stack = [by_id[c] for c in g.child_ids]
     while stack:
@@ -279,31 +272,31 @@ def _dominant_paint(g: VisualGroup, by_id: dict[str, VisualGroup]) -> str | None
         own = d.evidence.background.own
         if (
             own != "transparent"
-            and d.bounds.width >= FULL_WIDTH * g.bounds.width
-            and d.bounds.height >= DOMINANT_PAINT_HEIGHT * g.bounds.height
+            and d.bounds.width >= config.full_width * g.bounds.width
+            and d.bounds.height >= config.dominant_paint_height * g.bounds.height
         ):
             return own
         stack.extend(by_id[c] for c in d.child_ids)
     return None
 
 
-def _effective_background(g: VisualGroup, by_id: dict[str, VisualGroup]) -> str:
+def _effective_background(g: VisualGroup, by_id: dict[str, VisualGroup], config: DetectorConfig) -> str:
     bg = g.evidence.background
     if bg.own != "transparent":
         return bg.own
-    return _dominant_paint(g, by_id) or bg.context or "canvas"
+    return _dominant_paint(g, by_id, config) or bg.context or "canvas"
 
 
-def _band_background(band: list[VisualGroup], by_id: dict[str, VisualGroup]) -> str:
-    values = {_effective_background(g, by_id) for g in band}
+def _band_background(band: list[VisualGroup], by_id: dict[str, VisualGroup], config: DetectorConfig) -> str:
+    values = {_effective_background(g, by_id, config) for g in band}
     return values.pop() if len(values) == 1 else "complex"
 
 
-def _distinct(bands: list[list[VisualGroup]], by_id: dict[str, VisualGroup]) -> bool:
+def _distinct(bands: list[list[VisualGroup]], by_id: dict[str, VisualGroup], config: DetectorConfig) -> bool:
     """Whether sub-bands look like separate regions: their own landmarks, or different paint."""
     if any(g.evidence.landmark in REGION_LANDMARKS for band in bands for g in band):
         return True
-    return len({_band_background(b, by_id) for b in bands}) > 1
+    return len({_band_background(b, by_id, config) for b in bands}) > 1
 
 
 def _content_boxes(members: list[VisualGroup], by_id: dict[str, VisualGroup]) -> list[Rect]:
@@ -319,7 +312,9 @@ def _content_boxes(members: list[VisualGroup], by_id: dict[str, VisualGroup]) ->
     return boxes
 
 
-def _boundary(bid, level, above: RegionCandidate, below: RegionCandidate, by_id, loose: list[Rect]) -> BoundaryCandidate:
+def _boundary(
+    bid, level, above: RegionCandidate, below: RegionCandidate, by_id, loose: list[Rect], config: DetectorConfig
+) -> BoundaryCandidate:
     a_groups = [by_id[i] for i in above.group_ids]
     b_groups = [by_id[i] for i in below.group_ids]
     a_bottom = above.bounds.y + above.bounds.height
@@ -330,19 +325,20 @@ def _boundary(bid, level, above: RegionCandidate, below: RegionCandidate, by_id,
     content_gap = None
     if a_content and b_content:
         content_gap = min(r.y for r in b_content) - max(r.y + r.height for r in a_content)
+    tol = config.touch_tolerance
     spans = (
-        any(r.y + r.height > y + TOLERANCE for r in a_content)
-        or any(r.y < y - TOLERANCE for r in b_content)
-        or any(r.y < y - TOLERANCE and r.y + r.height > y + TOLERANCE for r in loose)  # out-of-flow content
+        any(r.y + r.height > y + tol for r in a_content)
+        or any(r.y < y - tol for r in b_content)
+        or any(r.y < y - tol and r.y + r.height > y + tol for r in loose)  # out-of-flow content
     )
 
-    bg_a, bg_b = _band_background(a_groups, by_id), _band_background(b_groups, by_id)
+    bg_a, bg_b = _band_background(a_groups, by_id, config), _band_background(b_groups, by_id, config)
     change = None if "complex" in (bg_a, bg_b) else bg_a != bg_b
     # Every group on both sides is transparent over the same painted ancestor: its paint runs across.
     backgrounds = [g.evidence.background for g in a_groups + b_groups]
     contexts = {bg.context_element_id for bg in backgrounds}
     shared = None
-    dominant = any(_dominant_paint(g, by_id) for g in a_groups + b_groups)
+    dominant = any(_dominant_paint(g, by_id, config) for g in a_groups + b_groups)
     if all(bg.own == "transparent" for bg in backgrounds) and len(contexts) == 1 and not dominant:
         shared = contexts.pop()
 
@@ -374,13 +370,13 @@ def _single_landmark(band: list[VisualGroup]) -> str | None:
     return band[0].evidence.landmark if len(band) == 1 else None
 
 
-def _overlaps(regions: list[RegionCandidate]) -> list[Overlap]:
+def _overlaps(regions: list[RegionCandidate], tol: float) -> list[Overlap]:
     out = []
     for i, a in enumerate(regions):
         for b in regions[i + 1 :]:
             w = min(a.bounds.x + a.bounds.width, b.bounds.x + b.bounds.width) - max(a.bounds.x, b.bounds.x)
             h = min(a.bounds.y + a.bounds.height, b.bounds.y + b.bounds.height) - max(a.bounds.y, b.bounds.y)
-            if w <= TOLERANCE or h <= TOLERANCE:
+            if w <= tol or h <= tol:
                 continue
             roles = {a.role, b.role}
             kind = "overlay" if "overlay" in roles else "header_over_content" if "header" in roles else "content"

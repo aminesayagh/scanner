@@ -174,10 +174,44 @@ class Omitted(BaseModel):
     reason: Literal["not_visible", "pass_through", "empty_box"]
 
 
+class DetectorConfig(BaseModel):
+    """Tunable analysis parameters (detector.toml). Experimental values, not validated constants.
+
+    Used by all three analysis stages (normalize, candidates, detector). Lengths are CSS px; shares are
+    fractions of a width or height in (0, 1].
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # Structure (normalize, candidates)
+    geometry_tolerance: float = Field(2.0, ge=0, allow_inf_nan=False)  # edges this close count as the same box
+    touch_tolerance: float = Field(2.0, ge=0, allow_inf_nan=False)  # overlap this small counts as touching, not crossing
+    max_nesting: int = Field(3, ge=1)  # deepest level of nested alternatives below a top-level region
+    full_width: float = Field(0.9, gt=0, le=1, allow_inf_nan=False)  # width share that counts as full width
+    # Height share a painted (near full-width) descendant must cover to colour its region.
+    dominant_paint_height: float = Field(0.5, gt=0, le=1, allow_inf_nan=False)
+    # Headers and footers (candidates)
+    header_max_top: float = Field(200.0, ge=0, allow_inf_nan=False)  # a header landmark starts within this of the top...
+    header_max_height: float = Field(300.0, gt=0, allow_inf_nan=False)  # ...and is at most this tall; else content
+    top_edge: float = Field(10.0, ge=0, allow_inf_nan=False)  # a fallback (non-landmark) header starts this close to the top
+    footer_max_gap: float = Field(100.0, ge=0, allow_inf_nan=False)  # a footer landmark ends this close to the page bottom...
+    footer_min_width: float = Field(0.5, gt=0, le=1, allow_inf_nan=False)  # ...and spans at least this share of the page width
+    # Spacing (detector)
+    gap_ratio_threshold: float = Field(3.0, gt=0, allow_inf_nan=False)
+    fallback_spacing_floor: float = Field(16.0, gt=0, allow_inf_nan=False)  # CSS px, when no line height is measurable
+    min_spacing_observations: int = Field(2, ge=1)  # internal gaps needed before a side's spacing counts
+    spacing_depth: int = Field(2, ge=1)  # stacking levels of rows that internal spacing is measured in
+    # Limitations (detector)
+    hidden_min_height: float = Field(300.0, gt=0, allow_inf_nan=False)  # a band of hidden content this tall is flagged
+    # Decisions. Evaluation baselines: "container" decides on structure and paint only, "gaps" on the gap ratio only.
+    mode: Literal["combined", "container", "gaps"] = "combined"
+
+
 class GroupSnapshot(BaseModel):
     schema_version: int = SCHEMA_VERSION
     capture_id: str
     normalizer_version: str
+    config: DetectorConfig | None = None  # effective configuration; None in files written before it was recorded
     groups: list[VisualGroup]
     omitted: list[Omitted]
 
@@ -242,6 +276,7 @@ class CandidateSnapshot(BaseModel):
     schema_version: int = SCHEMA_VERSION
     capture_id: str
     candidates_version: str
+    config: DetectorConfig | None = None  # effective configuration; None in files written before it was recorded
     structure: PageStructure
     regions: list[RegionCandidate]
     boundaries: list[BoundaryCandidate]
@@ -258,18 +293,6 @@ class CandidateSnapshot(BaseModel):
         if missing := set(refs) - ids:
             raise ValueError(f"unknown region IDs: {sorted(missing)}")
         return self
-
-
-class DetectorConfig(BaseModel):
-    """Tunable detector parameters (detector.toml). Experimental values, not validated constants."""
-
-    model_config = {"extra": "forbid"}
-
-    gap_ratio_threshold: float = Field(3.0, gt=0, allow_inf_nan=False)
-    fallback_spacing_floor: float = Field(16.0, gt=0, allow_inf_nan=False)  # CSS px, when no line height is measurable
-    min_spacing_observations: int = Field(2, ge=1)  # internal gaps needed before a side's spacing counts
-    # Evaluation baselines: "container" decides on structure and paint only, "gaps" on the gap ratio only.
-    mode: Literal["combined", "container", "gaps"] = "combined"
 
 
 class SpacingEstimate(BaseModel):

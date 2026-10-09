@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from section_scan.candidates import generate
 from section_scan.capture import capture
 from section_scan.cli import app
-from section_scan.models import CandidateSnapshot, ElementSnapshot
+from section_scan.models import CandidateSnapshot, ElementSnapshot, GroupSnapshot, ProposalSnapshot
 from section_scan.normalize import normalize
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -159,6 +159,32 @@ def test_tall_header_landmark_is_treated_as_content(tmp_path):
     header = next(r for r in cands.regions if r.role == "header")
     assert region_of_text(elements, groups, cands, "Site nav") is header
     assert region_of_text(elements, groups, cands, "Big hero").role == "flow"
+
+
+def test_config_header_max_height_changes_header_choice(tmp_path):
+    # The 500px <header> is a hero by default; allowing taller headers in detector.toml makes it the header.
+    page = tmp_path / "hero-header.html"
+    page.write_text(
+        "<!doctype html><body style='margin:0'>"
+        "<header style='height:500px;background:#123;color:#fff'><h1>Big hero</h1></header>"
+        "<main><section style='height:400px'><h2>Body</h2></section></main></body>"
+    )
+    out = tmp_path / "r"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    elements = ElementSnapshot.model_validate_json((out / "elements.json").read_text())
+    groups = normalize(elements)
+    assert region_of_text(elements, groups, generate(groups), "Big hero").role == "flow"
+
+    cfg = tmp_path / "detector.toml"
+    cfg.write_text("header_max_height = 600.0\n")
+    result = CliRunner().invoke(app, ["detect", str(out), "--config", str(cfg)])
+    assert result.exit_code == 0, result.output
+    groups = GroupSnapshot.model_validate_json((out / "groups.json").read_text())
+    cands = CandidateSnapshot.model_validate_json((out / "candidates.json").read_text())
+    props = ProposalSnapshot.model_validate_json((out / "proposals.json").read_text())
+    assert region_of_text(elements, groups, cands, "Big hero").role == "header"
+    # Every stage records the configuration it ran with.
+    assert groups.config.header_max_height == cands.config.header_max_height == props.config.header_max_height == 600
 
 
 def detect_html(tmp_path, html: str):

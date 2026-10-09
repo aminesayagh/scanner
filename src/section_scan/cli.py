@@ -136,7 +136,7 @@ def detect(
         console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
         raise typer.Exit(2)
     snapshot = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
-    groups = normalize(snapshot)
+    groups = normalize(snapshot, cfg)
     (run / "groups.json").write_text(groups.model_dump_json(indent=1))
 
     by_id = {g.id: g for g in groups.groups}
@@ -163,7 +163,7 @@ def detect(
         console.print(tree)
     console.print(f"Groups written → {run / 'groups.json'}  ({len(groups.groups)} groups)")
 
-    cands = generate(groups)
+    cands = generate(groups, cfg)
     (run / "candidates.json").write_text(cands.model_dump_json(indent=1))
     for note in cands.structure.notes:
         console.print(f"[dim]{note}[/]")
@@ -422,8 +422,8 @@ def evaluate(
     console.print(f"[dim]Config: {config or 'built-in defaults'} — {base.model_dump(exclude={'mode'})}[/]")
     ann = Annotation.model_validate_json(annotation.read_text())
     snapshot = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
-    groups = normalize(snapshot)
-    cands = generate(groups)
+    groups = normalize(snapshot, base)
+    cands = generate(groups, base)
     table = Table("Expected", "Proposed", "Missed", "False splits", "Extra", "Ambiguous", "Est. edits")
     table.columns.insert(0, Column("Mode", no_wrap=True, min_width=9))  # never truncate the mode name
     details = []

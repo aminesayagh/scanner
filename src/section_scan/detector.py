@@ -16,7 +16,7 @@ outcomes are recorded instead.
 
 import statistics
 
-from .candidates import FULL_WIDTH, REGION_LANDMARKS, _bands, _union
+from .candidates import REGION_LANDMARKS, _bands, _union
 from .models import (
     BoundaryCandidate,
     BoundaryProposal,
@@ -34,15 +34,6 @@ from .models import (
 # Bump when decision rules change, so old proposals.json files stay identifiable.
 DETECTOR_VERSION = "2"
 
-# Stacking levels that internal spacing is measured in: the region's first stack of rows and the stacks
-# directly inside it. A container whose children form one row (a wrapper, or columns side by side) adds
-# no level, so wrapped sections are measured as deep as their first rows.
-SPACING_DEPTH = 2
-
-# CSS px: a blank-looking band of hidden elements at least this tall is recorded as a limitation.
-# ponytail: structural constant; moves to detector.toml with the other constants.
-HIDDEN_MIN_HEIGHT = 300.0
-
 
 def detect(
     elements: ElementSnapshot, groups: GroupSnapshot, cands: CandidateSnapshot, config: DetectorConfig
@@ -54,8 +45,8 @@ def detect(
     page_width = max((g.bounds.width for g in groups.groups if g.parent_id is None), default=0.0)
     boundaries = [_decide(b, regions, by_id, styles, config, page_width) for b in cands.boundaries]
     decided = {b.id: b for b in boundaries}
-    sections, notes, unassigned = _assemble(cands, decided, by_id)
-    _flag_hidden_content(sections, elements, groups)
+    sections, notes, unassigned = _assemble(cands, decided, by_id, config)
+    _flag_hidden_content(sections, elements, groups, config)
 
     status = "ok" if any(s.role == "flow" for s in sections) else "unsupported"
     if status == "unsupported":
@@ -75,32 +66,33 @@ def detect(
 # --- measurements ---------------------------------------------------------------------------------
 
 
-def _internal_gaps(members: list[VisualGroup], by_id: dict[str, VisualGroup]) -> list[float]:
+def _internal_gaps(members: list[VisualGroup], by_id: dict[str, VisualGroup], config: DetectorConfig) -> list[float]:
     """Positive vertical gaps between consecutive rows of children, in the region's first stacks of rows
-    and the stacks directly inside them: compact local groups, not every deeply nested detail.
+    and the stacks directly inside them (config.spacing_depth levels; 2 by default): compact local
+    groups, not every deeply nested detail.
 
     Only vertical gaps between stacked rows count: side-by-side children (horizontal gaps) are banded
     into one row first, so button gaps never mix with paragraph spacing. Single-row containers are
-    passed through without using up SPACING_DEPTH: theme wrappers would otherwise hide every row.
+    passed through without using up a level: theme wrappers would otherwise hide every row.
     """
     gaps, stack = [], [(g, 0) for g in members]
     while stack:
         g, depth = stack.pop()
         kids = [by_id[c] for c in g.child_ids if by_id[c].positioning in ("flow", "sticky")]
-        rows = _bands(kids)
+        rows = _bands(kids, config)
         for above, below in zip(rows, rows[1:]):
             bottom = max(k.bounds.y + k.bounds.height for k in above)
             top = min(k.bounds.y for k in below)
             if top - bottom > 0:
                 gaps.append(top - bottom)
         level = depth + (len(rows) > 1)  # only a stack of rows is a new level
-        if level < SPACING_DEPTH:
+        if level < config.spacing_depth:
             stack.extend((k, level) for k in kids)
     return gaps
 
 
 def _spacing(members, by_id, config: DetectorConfig) -> SpacingEstimate:
-    gaps = _internal_gaps(members, by_id)
+    gaps = _internal_gaps(members, by_id, config)
     value = statistics.median(gaps) if len(gaps) >= config.min_spacing_observations else None
     return SpacingEstimate(value=value, observations=len(gaps))
 
@@ -154,7 +146,7 @@ def _decide(b: BoundaryCandidate, regions, by_id, styles, config: DetectorConfig
 
     supporting, opposing, rules = [], [], []
     # A section-level paint change spans the page; a narrower painted card is a child of its section.
-    wide = min(above.bounds.width, below.bounds.width) >= FULL_WIDTH * page_width
+    wide = min(above.bounds.width, below.bounds.width) >= config.full_width * page_width
     paint_change = bool(ev.background_change) and wide
     if paint_change:
         supporting.append(f"background changes ({ev.backgrounds[0]} → {ev.backgrounds[1]})")
@@ -260,7 +252,7 @@ def _decide(b: BoundaryCandidate, regions, by_id, styles, config: DetectorConfig
 # --- section assembly -----------------------------------------------------------------------------
 
 
-def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by_id):
+def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by_id, config: DetectorConfig):
     """Cut the page at split/ambiguous boundaries; join units across keep boundaries."""
     notes: list[str] = []
     regions = {r.id: r for r in cands.regions}
@@ -373,7 +365,7 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
         claims[best.id].add(g.id)
         claimed.add(g.id)
 
-    _link_overlaps(sections)
+    _link_overlaps(sections, config.touch_tolerance)
     claimed = [g for c in claims.values() for g in c]
     if len(claimed) != len(set(claimed)):
         raise ValueError("a group was assigned to more than one section")
@@ -421,13 +413,15 @@ def _leftovers(gid, covered, by_id) -> list[str]:
     return [x for c in by_id[gid].child_ids for x in _leftovers(c, covered, by_id)]
 
 
-def _flag_hidden_content(sections: list[SectionProposal], elements: ElementSnapshot, groups: GroupSnapshot) -> None:
+def _flag_hidden_content(
+    sections: list[SectionProposal], elements: ElementSnapshot, groups: GroupSnapshot, config: DetectorConfig
+) -> None:
     """Record bands of a flow section where content exists but was captured invisible.
 
     Scroll-reveal effects leave elements rendered with opacity 0 (or visibility: hidden) until the page
     is scrolled, so the screenshot shows a blank area. Within each vertical stretch of the section that
     no visible content group covers, the hidden elements' extent is a band; one at least
-    HIDDEN_MIN_HEIGHT tall is recorded. Only flags: sections are not split or merged.
+    config.hidden_min_height tall is recorded. Only flags: sections are not split or merged.
     """
     def hidden(v) -> bool:
         # Tiny/offscreen elements are deliberate (screen-reader text), not unseen content.
@@ -458,18 +452,18 @@ def _flag_hidden_content(sections: list[SectionProposal], elements: ElementSnaps
             if not inside:
                 continue
             band = (max(lo, min(a for a, _ in inside)), min(hi, max(b for _, b in inside)))
-            if band[1] - band[0] >= HIDDEN_MIN_HEIGHT:
+            if band[1] - band[0] >= config.hidden_min_height:
                 s.limitations.append(
                     SectionLimitation(kind="hidden_content", top=band[0], bottom=band[1], element_count=len(inside))
                 )
 
 
-def _link_overlaps(sections: list[SectionProposal]) -> None:
+def _link_overlaps(sections: list[SectionProposal], tol: float) -> None:
     for i, a in enumerate(sections):
         for b in sections[i + 1 :]:
             w = min(a.bounds.x + a.bounds.width, b.bounds.x + b.bounds.width) - max(a.bounds.x, b.bounds.x)
             h = min(a.bounds.y + a.bounds.height, b.bounds.y + b.bounds.height) - max(a.bounds.y, b.bounds.y)
-            if w <= 2 or h <= 2:
+            if w <= tol or h <= tol:
                 continue
             roles = {a.role, b.role}
             kind = "overlay" if "overlay" in roles else "header_over_content" if "header" in roles else "content"
