@@ -186,28 +186,40 @@ def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem]:
 
 
 def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
-    """One entry per DOM branch that holds text. Wrappers around a single branch are looked through; a
-    branch with one item gives that item (loose text becomes "p"), with several a group of all of them.
+    """One entry per DOM branch that holds text, one level deep.
+
+    A branch whose parts are single items (a heading and its paragraph, the links of one nav) is a group
+    of them; a lone item stays an item (loose text becomes "p"). A branch holding parts that are groups
+    themselves (two navs in one wrapper, a row of cards) is split into those parts instead, so a group
+    never contains another group. Lists stay whole as ul/ol.
     """
-    branches = sorted((m for m in members if by_id[m].parent_id not in members), key=_order)
-    branches = [b for b in branches if _leaf_items([b], members, by_id)]
-    while len(branches) == 1:
-        e = by_id[branches[0]]
+    def items(b):
+        return _leaf_items([b], members, by_id)
+
+    def parts(b):
+        return [c for c in by_id[b].child_ids if c in members and items(c)]
+
+    def expand(b) -> list[str]:
+        e = by_id[b]
         if e.tag in TEXT_BLOCKS or e.tag in ("ul", "ol") or (e.visibility.visible and _text_of(e)):
-            break  # the branch is itself content, not a wrapper
-        inner = [c for c in e.child_ids if c in members and _leaf_items([c], members, by_id)]
-        if not inner:
-            break
-        branches = inner
+            return [b]  # content itself, not a wrapper
+        sub = parts(b)
+        if len(sub) == 1:
+            return expand(sub[0])  # a wrapper around a single branch
+        if any(len(items(c)) > 1 for c in sub):
+            return [x for c in sub for x in expand(c)]
+        return [b]
+
+    roots = sorted((m for m in members if by_id[m].parent_id not in members), key=_order)
     out: list[MessageItem | MessageGroup] = []
-    for b in branches:
-        items = _leaf_items([b], members, by_id)
-        if len(items) == 1:
-            item = items[0]
+    for b in (x for r in roots if items(r) for x in expand(r)):
+        found = items(b)
+        if len(found) == 1:
+            item = found[0]
             out.append(item if item.tag != "text" else MessageItem(tag="p", text=item.text))
         else:
             tag = by_id[b].tag if by_id[b].tag in ("ul", "ol") else "group"
-            out.append(MessageGroup(tag=tag, children=items))
+            out.append(MessageGroup(tag=tag, children=found))
     return out
 
 

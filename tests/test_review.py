@@ -371,14 +371,16 @@ def test_report_json_section_id_is_an_anchor_wrapping_all_its_content(tmp_path):
 
 
 def test_report_json_content_anarchie_follows_dom_branches_one_level_deep(tmp_path):
-    # The shape of masayagh.com's header: wrappers, then three branches.
+    # The shape of masayagh.com's header: wrappers; logo + time; one wrapper holding two navs.
     page = tmp_path / "branches.html"
     page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Branches</title></head>
       <body style="margin: 0">
         <header style="height: 60px"><div><div style="display: flex; gap: 40px">
           <div><img alt="" width="20" height="20" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'/>"><time>11:26 PM, Morocco</time></div>
-          <div><nav><a href="#">Home</a> <span>/</span> <a href="#">Projects</a></nav></div>
-          <nav><a href="#">About us</a> <a href="#">Get in touch</a></nav>
+          <div style="display: flex; gap: 40px">
+            <nav><a href="#">Home</a> <span>/</span> <a href="#">Projects</a></nav>
+            <nav><a href="#">About us</a> <a href="#">Get in touch</a></nav>
+          </div>
         </div></div></header>
         <section style="padding: 40px; background: rgb(240, 240, 250)">
           <div><div><h2>Plans</h2><p>Pick one</p></div>
