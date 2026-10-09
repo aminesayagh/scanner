@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from .models import Browser, ElementSnapshot, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
 
 # Bump when browser_extract.js changes what it measures, so old element files stay identifiable.
-EXTRACTOR_VERSION = "2"
+EXTRACTOR_VERSION = "3"
 _EXTRACT = (Path(__file__).parent / "browser_extract.js").read_text()
 
 
@@ -61,6 +61,12 @@ _FREEZE_ANIMATIONS = """() => document.getAnimations().forEach(a => {
   const end = a.effect && a.effect.getComputedTiming().endTime;
   if (end !== undefined && end !== Infinity) a.finish(); else a.cancel();
 })"""
+
+_PAGE_INFO = """() => {
+  const meta = document.querySelector('meta[name="description"]') || document.querySelector('meta[property="og:description"]');
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim() || null;
+  return [clean(document.title), clean(meta && meta.content)];
+}"""
 
 _SCROLL_STATE = """() => {
   const s = document.scrollingElement || document.documentElement;
@@ -153,6 +159,7 @@ def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits
     (out_dir / "elements.json").write_text(snapshot.model_dump_json(indent=1))
     manifest.extractor_version = EXTRACTOR_VERSION
     manifest.final_url = page.url  # the page may still redirect itself during readiness waits
+    manifest.title, manifest.description = page.evaluate(_PAGE_INFO)
     complete = (
         manifest.scroll.truncated_reason is None
         and manifest.screenshot.layout_consistent

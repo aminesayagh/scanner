@@ -17,11 +17,27 @@
   const out = [];
 
   const rect = (r) => ({ x: r.left, y: r.top, width: r.width, height: r.height });
-  const ownText = (el) => {
+  const collapse = (t) => t.replace(/\s+/g, ' ').trim();
+  const ownFullText = (el) => {
     let t = '';
     for (const n of el.childNodes) if (n.nodeType === Node.TEXT_NODE) t += n.textContent;
-    t = t.replace(/\s+/g, ' ').trim();
+    return collapse(t);
+  };
+  const ownText = (el) => {
+    const t = ownFullText(el);
     return t.length > 80 ? t.slice(0, 79) + '…' : t;
+  };
+  // Headings, paragraphs and list items are read whole (inline links and emphasis included), as rendered.
+  const TEXT_BLOCKS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li']);
+  // A list item's text leaves out nested lists: their items are listed on their own.
+  const blockText = (el) => {
+    if (el.tagName !== 'LI') return collapse(el.innerText || '');
+    let t = '';
+    for (const n of el.childNodes) {
+      if (n.nodeType === Node.TEXT_NODE) t += n.textContent;
+      else if (n.nodeType === Node.ELEMENT_NODE && !['UL', 'OL'].includes(n.tagName)) t += ' ' + (n.innerText || '') + ' ';
+    }
+    return collapse(t);
   };
   // The root is the page itself; a <body> that scrolls on its own (app-shell layouts) is a scroller like any other.
   const isScroller = (el, cs) =>
@@ -174,7 +190,9 @@
 
     Object.assign(node, {
       role: el.getAttribute('role'),
+      html_id: el.id || null,
       text: LEAF.has(tag) ? '' : ownText(el),
+      full_text: LEAF.has(tag) ? '' : TEXT_BLOCKS.has(tag) ? blockText(el) : ownFullText(el),
       box: contents ? 'contents' : 'normal',
       bounds,
       viewport_bounds: vr,

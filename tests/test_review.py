@@ -289,3 +289,82 @@ def test_export_order_is_page_order_and_needs_something_to_export(run, tmp_path)
         cli("review", run, "exclude", r.id)
     result = cli("export", run, "-o", tmp_path / "empty.json")
     assert result.exit_code == 1 and "nothing to export" in result.output
+
+
+def test_report_json_lists_sections_with_position_flags_role_and_message_only(run):
+    cli("review", run, "list")
+    overlay = next(r for r in state(run).regions if r.role == "overlay")
+    cli("review", run, "exclude", overlay.id)
+    assert cli("report", run).exit_code == 0
+    doc = json.loads((run / "report.json").read_text())
+    assert set(doc) == {"link", "title", "description", "sections"}
+    assert doc["link"].startswith("file://") and doc["link"].endswith("candidates-landmarks.html")
+    assert doc["title"] == "Candidates (landmarks)" and doc["description"] == "A page with every landmark case."
+    assert all(set(s) == {"id", "position", "flags", "role", "message"} for s in doc["sections"])
+    assert all(set(s["position"]) == {"x", "y", "width", "height"} for s in doc["sections"])
+    ys = [s["position"]["y"] for s in doc["sections"]]
+    assert ys == sorted(ys)  # top to bottom
+    assert "overlay" not in [s["role"] for s in doc["sections"]]  # excluded in review
+    assert "overlaps:header_over_content" in doc["sections"][0]["flags"]  # header drawn over the content
+
+
+def test_report_json_message_lists_section_content_with_tags(run):
+    cli("report", run)
+    doc = json.loads((run / "report.json").read_text())
+    by_first = {s["message"]["content"][0]["text"]: s["message"]["content"] for s in doc["sections"] if s["message"]["content"]}
+    assert by_first["Hero title"] == [{"tag": "h1", "text": "Hero title"}, {"tag": "p", "text": "Hero copy"}]
+    # A paragraph is one entry with its inline link; the link's text is not listed again.
+    assert by_first["Plain"] == [{"tag": "h2", "text": "Plain"}, {"tag": "p", "text": "Plain text with a link."}]
+    features = next(c for c in by_first.values() if {"tag": "h2", "text": "Features"} in c)
+    assert {"tag": "text", "text": "New"} in features and {"tag": "h3", "text": "Three"} in features
+    every = [i["text"] for s in doc["sections"] for i in s["message"]["content"]]
+    assert "Mobile menu" not in every  # hidden content is not part of the message
+
+
+def test_report_json_groups_list_items_under_their_list_without_double_nesting(tmp_path):
+    page = tmp_path / "lists.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Lists</title></head>
+      <body style="margin: 0"><section style="padding: 40px">
+        <h1>Plans</h1><p>Pick one of <a href="#">these</a>.</p>
+        <ul><li>Starter</li><li>Pro <strong>plan</strong><ol><li>Nested one</li><li>Nested two</li></ol></li><li>Agency</li></ul>
+        <p>After the list</p>
+      </section>
+      <section style="padding: 40px; background: rgb(30, 30, 60); color: white"><h2>Next section</h2></section>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    content = next(s for s in json.loads((out / "report.json").read_text())["sections"] if s["role"] == "flow")["message"]["content"]
+    assert content == [
+        {"tag": "h1", "text": "Plans"},
+        {"tag": "p", "text": "Pick one of these."},
+        {"tag": "ul", "children": [
+            {"tag": "li", "text": "Starter"},
+            {"tag": "li", "text": "Pro plan"},
+            {"tag": "li", "text": "Nested one"},
+            {"tag": "li", "text": "Nested two"},
+            {"tag": "li", "text": "Agency"},
+        ]},
+        {"tag": "p", "text": "After the list"},
+    ]
+
+
+
+def test_report_json_section_id_is_an_anchor_wrapping_all_its_content(tmp_path):
+    page = tmp_path / "anchors.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Anchors</title></head>
+      <body style="margin: 0"><div id="page">
+        <section id="intro" style="padding: 40px; background: rgb(250, 230, 230)"><h1>Intro</h1><p>Hello</p></section>
+        <section style="padding: 40px; background: rgb(230, 250, 230)">
+          <div id="pricing"><div id="pricing-title"><h2>Pricing</h2></div><p>Plans</p>
+            <img alt="" width="100" height="50" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='50'/>"></div>
+        </section>
+        <section style="padding: 40px; background: rgb(230, 230, 250)"><h2 id="faq-title">FAQ</h2><p>Answers</p></section>
+      </div></body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    ids = {s["message"]["content"][0]["text"]: s["id"] for s in json.loads((out / "report.json").read_text())["sections"]}
+    assert ids["Intro"] == "intro"  # the section element itself
+    assert ids["Pricing"] == "pricing"  # an inner wrapper around all the content, not the heading-only one
+    assert ids["FAQ"] is None  # only the heading has an id; "page" also wraps other sections

@@ -38,11 +38,46 @@ and config always give the same ordered result.
 |---|---|
 | `capture URL -o DIR` | Loads the page once and saves `manifest.json`, `screenshot.png` and `elements.json`. It waits for fonts, images and layout within time limits, and scrolls within limits so lazy-loaded content appears. Add `--headed --manual-ready` to dismiss banners yourself before capture. |
 | `detect DIR` | Writes `groups.json` (simplified visual groups), `candidates.json` (regions, boundaries and evidence) and `proposals.json` (decisions and proposed sections). |
-| `report DIR` | Writes `report.html` for the reviewed state, or the raw proposals if there is no review yet. |
+| `report DIR` | Writes `report.html` for the reviewed state, or the raw proposals if there is no review yet, and `report.json` (see below). |
 | `review DIR [CMD …]` | Interactive prompt, or one command: `list`, `inspect`, `rename`, `merge`, `split ID Y\|bN [crossing=above\|below]`, `adjust ID top=… bottom=…`, `exclude`, `confirm ID`, `confirm all`, `undo`, `report`, `finish`. |
 | `export DIR -o FILE [--draft]` | Writes confirmed sections in top-to-bottom `order`. A normal export fails until every retained region is confirmed; `--draft` includes unconfirmed regions marked `proposed`. |
 | `overlay DIR [--id …\|--group …\|--regions\|--sections]` | Diagnostic: draws elements, groups, regions or sections over the screenshot. |
 | `evaluate DIR ANNOTATION` | Compares the detector with container-only and gaps-only baselines (see `evaluation/README.md`); uses `./detector.toml` like `detect`. |
+
+## report.json
+
+A compact summary next to `report.html`, with sections top to bottom (excluded ones left out):
+
+```json
+{
+  "link": "https://example.com/",
+  "title": "Page title",
+  "description": "Meta description",
+  "sections": [
+    {
+      "id": "pricing",
+      "position": { "x": 0, "y": 900, "width": 1440, "height": 982 },
+      "flags": ["ambiguous", "hidden_content", "overlaps:overlay"],
+      "role": "flow",
+      "message": { "content": [
+        { "tag": "h2", "text": "Pricing" },
+        { "tag": "p", "text": "Pick one of these plans." },
+        { "tag": "ul", "children": [ { "tag": "li", "text": "Starter" }, { "tag": "li", "text": "Pro" } ] },
+        { "tag": "text", "text": "Start free" }
+      ] }
+    }
+  ]
+}
+```
+
+- **`id`:** the `id` attribute of the outermost element that wraps all of the section's visible content and
+  nothing from another section, so `#id` scrolls to it; `null` when there is none.
+- **`position`:** document-space CSS pixels.
+- **`message`:** the visible text in page order, flat: headings, paragraphs and list items keep their tag
+  (`h1`–`h6`, `p`, `li`), and other text is `text`. A `ul`/`ol` is the only nesting; items of lists
+  nested inside it join its `children`.
+- **Older captures:** captures made before extractor 3 have no `id`, title or description, and only
+  80-character text previews.
 
 ## Section policy
 

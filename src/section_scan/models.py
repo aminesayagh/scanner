@@ -56,6 +56,8 @@ class Manifest(BaseModel):
     error: str | None = None
     input_url: str
     final_url: str | None = None
+    title: str | None = None  # document title at capture
+    description: str | None = None  # meta description (or og:description) at capture
     http_status: int | None = None
     captured_at: datetime
     viewport: Viewport
@@ -101,7 +103,10 @@ class Element(BaseModel):
     child_ids: list[str]
     tag: str
     role: str | None  # explicit role attribute only; landmark tags are read from `tag`
+    html_id: str | None = None  # the element's id attribute (scroll anchor); absent before extractor 3
     text: str  # whitespace-collapsed own text (not descendants'), truncated
+    # Untruncated text: the whole rendered text for h1-h6/p/li, own text otherwise. Absent before extractor 3.
+    full_text: str | None = None
     box: Literal["normal", "contents"]  # "contents": no own box; bounds are the union of its content
     # Fixed/sticky elements are measured where they sat at capture; see `positioning`.
     bounds: Rect  # document space
@@ -436,3 +441,49 @@ class ExportDocument(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate region IDs")
         return self
+
+
+class ReportPosition(BaseModel):
+    """Document-space box in CSS px."""
+
+    x: float
+    y: float
+    width: float = Field(ge=0)
+    height: float = Field(ge=0)
+
+
+class MessageItem(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "text"]  # "text": any other visible text
+    text: str
+
+
+class MessageList(BaseModel):
+    """A ul/ol with its items; nested lists add their items here instead of nesting further."""
+
+    model_config = {"extra": "forbid"}
+
+    tag: Literal["ul", "ol"]
+    children: list[MessageItem]
+
+
+class Message(BaseModel):
+    content: list[MessageItem | MessageList]  # the section's visible text in page order, flat except lists
+
+
+class ReportSection(BaseModel):
+    id: str | None  # id attribute of an element wrapping all of the section's content, for scrolling to it
+    position: ReportPosition
+    flags: list[str]
+    role: Literal["header", "footer", "flow", "overlay"]
+    message: Message
+
+
+class ReportDocument(BaseModel):
+    """report.json: a compact summary of a run's sections, top to bottom."""
+
+    link: str
+    title: str | None
+    description: str | None
+    sections: list[ReportSection]

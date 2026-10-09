@@ -213,7 +213,7 @@ def report(
                       "Run `review --restart` to review them.[/]")
         state = None
     path = write_report(run, state)
-    console.print(f"Report written → {path}")
+    console.print(f"Report written → {path} and {path.with_name('report.json')}")
     if open_:
         webbrowser.open(path.resolve().as_uri())
 

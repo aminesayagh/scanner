@@ -8,7 +8,18 @@ import base64
 from html import escape
 from pathlib import Path
 
-from .models import Manifest, ProposalSnapshot, ReviewState
+from .models import (
+    ElementSnapshot,
+    Manifest,
+    Message,
+    MessageItem,
+    MessageList,
+    ProposalSnapshot,
+    ReportDocument,
+    ReportPosition,
+    ReportSection,
+    ReviewState,
+)
 from .review import fingerprint
 
 _STYLE = """
@@ -37,9 +48,11 @@ def write_report(run: Path, review: ReviewState | None) -> Path:
 
     if review is not None:
         rows = [(r.id, r.label, r.role, r.status, r.bounds, r.ambiguous, r.notes, r.limitations) for r in review.regions]
+        members = {r.id: r.element_ids for r in review.regions}
         revision = review.revision
     else:
         rows = [(s.id, s.label, s.role, "proposed", s.bounds, s.ambiguous, s.notes, s.limitations) for s in props.sections]
+        members = {s.id: s.element_ids for s in props.sections}
         revision = None
 
     boxes, items = [], []
@@ -97,7 +110,141 @@ def write_report(run: Path, review: ReviewState | None) -> Path:
 """
     out = run / "report.html"
     out.write_text(html)
+    _write_json(run, manifest, rows, members)
     return out
+
+
+def _write_json(run: Path, manifest: Manifest, rows, members: dict[str, list[str]]) -> None:
+    """report.json: link, title, description and each section's position, flags, role and message."""
+    elements = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
+    by_id = {e.id: e for e in elements.elements}
+    retained = [row for row in rows if row[3] != "excluded"]
+    content = {row[0]: _content_ids(members[row[0]], by_id) for row in retained}
+    sections = []
+    for rid, _label, role, status, b, ambiguous, _notes, limitations in sorted(rows, key=lambda row: row[4].y):
+        if status == "excluded":
+            continue
+        flags = (["ambiguous"] if ambiguous else []) + [f"{x.kind}" for x in limitations]
+        flags += [f"overlaps:{kind}" for kind in _overlap_kinds(rid, role, b, rows)]
+        others = {e for other, ids in content.items() if other != rid for e in ids}
+        sections.append(ReportSection(
+            id=_anchor(content[rid], others, by_id),
+            position=ReportPosition(x=b.x, y=b.y, width=b.width, height=b.height), flags=flags, role=role,
+            message=_message(members[rid], by_id),
+        ))
+    doc = ReportDocument(
+        link=manifest.final_url or manifest.input_url,
+        title=manifest.title,
+        description=manifest.description,
+        sections=sections,
+    )
+    (run / "report.json").write_text(doc.model_dump_json(indent=2))
+
+
+TEXT_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"}
+
+
+def _message(element_ids: list[str], by_id) -> Message:
+    """The section's visible text in page order, flat: a heading followed by a paragraph are siblings.
+
+    A heading, paragraph or list item is one entry with its whole text (inline links included), so text
+    inside it is not repeated; other visible text is "text". A ul/ol is the only nesting: its items, and
+    those of lists nested in them, become its children, never a list inside a list.
+    """
+    members = set(element_ids)
+    items, used = [], set()
+
+    def text_of(e) -> str:
+        return e.full_text if e.full_text is not None else e.text  # before extractor 3: preview only
+
+    def descendants(eid):
+        stack = list(by_id[eid].child_ids)
+        while stack:
+            c = stack.pop()
+            yield c
+            stack.extend(by_id[c].child_ids)
+
+    for eid in sorted(members, key=_order):
+        e = by_id[eid]
+        if eid in used or not e.visibility.visible:
+            continue
+        if e.tag in ("ul", "ol"):
+            inner = sorted(descendants(eid), key=_order)
+            used.update(inner)
+            children = [
+                MessageItem(tag="li", text=text_of(by_id[c]))
+                for c in inner
+                if by_id[c].tag == "li" and c in members and by_id[c].visibility.visible and text_of(by_id[c])
+            ]
+            if children:
+                items.append(MessageList(tag=e.tag, children=children))
+            continue
+        if e.tag in TEXT_BLOCKS:
+            used.update(descendants(eid))  # already part of the block's text
+        if text := text_of(e):
+            items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
+    return Message(content=items)
+
+
+MEDIA = {"img", "svg", "video", "picture", "canvas", "iframe", "object", "embed"}
+
+
+def _content_ids(element_ids: list[str], by_id) -> set[str]:
+    """Visible elements that show something themselves: text or media."""
+    return {
+        e for e in element_ids
+        if by_id[e].visibility.visible and (by_id[e].text or by_id[e].tag in MEDIA)
+    }
+
+
+def _anchor(content: set[str], others: set[str], by_id) -> str | None:
+    """id of the outermost element that wraps all of this section's content and none of another's.
+
+    It need not be the section's own outer element: a wrapper inside it, or around it, qualifies too.
+    """
+    if not content:
+        return None
+
+    def chain(eid):  # the element and its ancestors, innermost first
+        out = []
+        while eid is not None:
+            out.append(eid)
+            eid = by_id[eid].parent_id
+        return out
+
+    common = set(chain(next(iter(content))))
+    for eid in content:
+        common &= set(chain(eid))
+    best = None
+    for eid in chain(next(iter(content))):  # innermost to outermost
+        if eid not in common or not by_id[eid].html_id:
+            continue
+        stack, inside = [eid], set()
+        while stack:
+            x = stack.pop()
+            inside.add(x)
+            stack.extend(by_id[x].child_ids)
+        if inside & others:
+            break  # from here outwards every ancestor also wraps another section's content
+        best = by_id[eid].html_id
+    return best
+
+
+def _order(eid: str) -> int:
+    return int(eid[1:])  # element IDs follow document order
+
+
+def _overlap_kinds(rid, role, b, rows) -> list[str]:
+    kinds = []
+    for other, _l, other_role, status, ob, *_ in rows:
+        if other == rid or status == "excluded":
+            continue
+        w = min(b.x + b.width, ob.x + ob.width) - max(b.x, ob.x)
+        h = min(b.y + b.height, ob.y + ob.height) - max(b.y, ob.y)
+        if w > 2 and h > 2:
+            roles = {role, other_role}
+            kinds.append("overlay" if "overlay" in roles else "header_over_content" if "header" in roles else "content")
+    return sorted(set(kinds))
 
 
 def describe_limitation(x) -> str:
