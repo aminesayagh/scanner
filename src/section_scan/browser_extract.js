@@ -30,6 +30,73 @@
      (/(auto|scroll)/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1));
   const clips = (cs) => cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
 
+  // What clip-path / clip leave of a w x h box: 'hidden' when nothing of it can paint (screen-reader
+  // patterns such as inset(50%) or rect(0 0 0 0)), 'partial' for any other clip, 'none' when unclipped.
+  // Lengths that are not plain px or % (calc(), keywords) parse to NaN and never count as hidden.
+  const px = (v, ref) => (v.endsWith('%') ? (parseFloat(v) / 100) * ref : parseFloat(v));
+  const clipState = (cs, w, h) => {
+    let state = 'none';
+    const m = /^(inset|circle|ellipse|polygon)\((.*)\)/.exec(cs.clipPath);
+    if (cs.clipPath !== 'none') state = 'partial';
+    if (m && m[1] === 'inset') {
+      const [t, r = t, b = t, l = r] = m[2].split(' round ')[0].trim().split(/\s+/);
+      if (h - px(t, h) - px(b, h) <= 0 || w - px(l, w) - px(r, w) <= 0) return 'hidden';
+    } else if (m && m[1] !== 'polygon') {
+      if (m[2].split('at ')[0].trim().split(/\s+/).some((v) => px(v, 1) === 0)) return 'hidden'; // zero radius
+    } else if (m) {
+      const pts = m[2].replace(/^(nonzero|evenodd),/, '').split(',')
+        .map((p) => p.trim().split(/\s+/)).map(([x, y]) => [px(x, w), px(y, h)]);
+      const area2 = pts.reduce((a, [x, y], i) => { // shoelace: twice the polygon's area
+        const [x2, y2] = pts[(i + 1) % pts.length];
+        return a + x * y2 - x2 * y;
+      }, 0);
+      if (Math.abs(area2) < 1) return 'hidden';
+    }
+    // clip applies to absolutely positioned boxes only; 'auto' edges are the box's own.
+    if (/^(absolute|fixed)$/.test(cs.position) && cs.clip.startsWith('rect(')) {
+      const [t, r, b, l] = cs.clip.slice(5, -1).split(/[\s,]+/)
+        .map((v, i) => (v === 'auto' ? [0, w, h, 0][i] : parseFloat(v)));
+      if (r <= l || b <= t) return 'hidden';
+      if (t > 0 || l > 0 || r < w || b < h) state = 'partial';
+    }
+    return state;
+  };
+
+  // Does it paint an opaque surface: a solid background colour or media, at full opacity (its own and its
+  // ancestors')? A transparent wrapper or a tinted overlay on top leaves what is below it visible.
+  const MEDIA = new Set(['img', 'video', 'canvas', 'iframe', 'object', 'embed']);
+  const opaque = (c) => {
+    const bg = getComputedStyle(c).backgroundColor; // alpha < 1 serializes as rgba(...) or "... / a)"
+    if (!MEDIA.has(c.tagName.toLowerCase()) && (bg.startsWith('rgba(') || bg.includes('/'))) return false;
+    for (let a = c; a; a = a.parentElement) if (getComputedStyle(a).opacity !== '1') return false;
+    return true;
+  };
+
+  // At one viewport point: is an opaque unrelated element (neither el, a descendant nor an ancestor) on top
+  // of el (true), or is el or its own content reached first (false)? null when neither is found.
+  const coveredAt = (el, x, y) => {
+    for (const c of document.elementsFromPoint(x, y)) { // topmost first
+      if (c === el || el.contains(c) || c.contains(el)) return false;
+      if (opaque(c)) return true;
+    }
+    return null;
+  };
+  // Occluded: covered at its centre and all four corners (a box's content may sit anywhere in it).
+  // Points outside the current viewport are unknown, so only a box wholly inside it can be occluded.
+  // Hit testing skips pointer-events: none and hidden elements, so for those nothing found says anything.
+  const occludedAt = (el, cs, vr) => {
+    if (cs.pointerEvents === 'none' || cs.visibility !== 'visible') return null;
+    const l = vr.x + 1, t = vr.y + 1, r = vr.x + vr.width - 1, b = vr.y + vr.height - 1;
+    let all = true;
+    for (const [x, y] of [[vr.x + vr.width / 2, vr.y + vr.height / 2], [l, t], [r, t], [l, b], [r, b]]) {
+      const inside = x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight;
+      const c = inside ? coveredAt(el, x, y) : null;
+      if (c === false) return false;
+      all = all && c === true;
+    }
+    return all ? true : null;
+  };
+
   // Union of rects in viewport space; null when there is nothing to unite.
   const union = (rects) => {
     if (!rects.length) return null;
@@ -54,6 +121,7 @@
     const sticky = inherited.sticky || pos === 'sticky';
     const opacity = parseFloat(cs.opacity);
     const scroller = isScroller(el, cs);
+    const clipped = own ? clipState(cs, own.width, own.height) : 'none';
     const childInherited = {
       fixed,
       sticky,
@@ -61,6 +129,7 @@
       // Clipped to nothing by a zero-size ancestor, e.g. a collapsed accordion panel.
       collapsed: inherited.collapsed || (own !== null && clips(cs) && (own.width === 0 || own.height === 0)),
       inScroller: inherited.inScroller || scroller,
+      clippedAway: inherited.clippedAway || clipped === 'hidden',
     };
 
     if (!LEAF.has(tag)) {
@@ -93,6 +162,8 @@
     const offscreen = hasBox && !inherited.inScroller &&
       (bounds.x + bounds.width <= 0 || bounds.y + bounds.height <= 0 || bounds.x >= docW || bounds.y >= docH);
     const tiny = vr.width <= 1 && vr.height <= 1; // visually-hidden pattern (1x1 + clip)
+    // Clipped-away boxes are skipped by hit testing too: nothing found over them says they are covered.
+    const occluded = hasBox && clipped !== 'hidden' && !inherited.clippedAway ? occludedAt(el, cs, vr) : null;
 
     const limitations = [];
     if (tag === 'iframe') limitations.push('iframe');
@@ -118,15 +189,19 @@
         has_box: hasBox,
         tiny,
         offscreen,
+        clipped,
+        clipped_ancestor: inherited.clippedAway,
+        occluded,
         visible: cs.visibility === 'visible' && opacity > 0 && !inherited.transparent && !inherited.collapsed &&
-                 hasBox && !tiny && !offscreen,
+                 hasBox && !tiny && !offscreen && clipped !== 'hidden' && !inherited.clippedAway && occluded !== true,
       },
       limitations,
     });
     return node.id;
   }
 
-  visit(document.body, null, { fixed: false, sticky: false, transparent: false, collapsed: false, inScroller: false });
+  visit(document.body, null,
+    { fixed: false, sticky: false, transparent: false, collapsed: false, inScroller: false, clippedAway: false });
   return {
     scroll: { x: scrollX, y: scrollY },
     document: { x: 0, y: 0, width: docW, height: docH },

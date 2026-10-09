@@ -2,7 +2,7 @@
 <html><head><meta charset="utf-8"><title>Extraction cases</title>
 <style>
   body { margin: 0; font: 16px sans-serif; }
-  #top { position: fixed; top: 0; left: 0; right: 0; height: 60px; background: rgb(17, 102, 204); }
+  #top { position: fixed; top: 0; left: 0; right: 0; height: 60px; background: rgb(17, 102, 204); z-index: 10; }
   #hero { margin-top: 60px; height: 400px; background: rgb(220, 30, 30); }
   #wrap { display: contents; }
   .half { height: 150px; }
@@ -19,6 +19,13 @@
   #wrapped-block { height: 100px; background: rgb(0, 150, 150); }
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   #accordion { height: 0; overflow: hidden; }
+  #clipped { clip-path: inset(50%); }
+  #clip-rect { position: absolute; width: 120px; height: 20px; clip: rect(0 0 0 0); }
+  #circled { clip-path: circle(40%); height: 50px; }
+  #covered { position: absolute; top: 10px; left: 20px; width: 80px; height: 24px; }
+  #glass { position: fixed; inset: 0; pointer-events: none; }
+  #tinted, #tint { position: absolute; top: 100px; left: 500px; width: 120px; height: 40px; }
+  #tint { background: rgba(0, 0, 0, 0.3); }
 </style></head>
 <body>
 <header id="top"><a href="#">Logo</a></header>
@@ -28,6 +35,12 @@
 <div style="display: contents"><span class="sr-only">Wrapped hidden</span><div id="wrapped-block">Wrapped block</div></div>
 <a class="visually-hidden" href="#hero">Skip to content</a>
 <div id="accordion"><p>Accordion body</p></div>
+<div id="clipped">Clipped away<p>Clipped child</p></div>
+<span id="clip-rect">Clip rect</span>
+<div id="circled">Partly clipped</div>
+<a id="covered" href="#hero">Covered link</a>
+<div id="glass"></div>
+<div id="tinted">Tinted box</div><div id="tint"></div>
 <object style="width: 40px; height: 40px"></object>
 <div id="stick">Sticky bar</div>
 <div id="ghost">Ghost text</div>

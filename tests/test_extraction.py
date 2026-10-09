@@ -176,6 +176,29 @@ def test_visually_hidden_and_collapsed_content_is_not_visible(run):
     assert accordion.collapsed_ancestor and not accordion.visible
 
 
+def test_content_clipped_to_nothing_is_not_visible(run):
+    _, _, by_text, _ = run
+    clipped = by_text["Clipped away"].visibility  # clip-path: inset(50%)
+    assert clipped.has_box and not clipped.tiny and clipped.clipped == "hidden" and not clipped.visible
+    child = by_text["Clipped child"].visibility
+    assert child.clipped_ancestor and not child.visible
+    rect = by_text["Clip rect"].visibility  # clip: rect(0 0 0 0) on a box larger than 1x1
+    assert rect.clipped == "hidden" and not rect.visible
+    partly = by_text["Partly clipped"].visibility  # clip-path: circle(40%)
+    assert partly.clipped == "partial" and partly.visible
+
+
+def test_occlusion_is_measured_in_the_first_viewport_only(run):
+    _, _, by_text, _ = run
+    covered = by_text["Covered link"].visibility  # under the opaque fixed header
+    assert covered.occluded is True and not covered.visible
+    # Only a pointer-events: none overlay lies over the hero; hit testing looks through it.
+    assert by_text["Hero title"].visibility.occluded is False
+    assert by_text["Tinted box"].visibility.occluded is False  # a translucent overlay on top still shows it
+    below = by_text["Below the fold"].visibility
+    assert below.occluded is None and below.visible  # never scrolled to: unknown, not a guess
+
+
 def test_object_is_recorded_as_uninspected(run):
     _, snap, *_ = run
     assert next(e for e in snap.elements if e.tag == "object").limitations == ["embed"]

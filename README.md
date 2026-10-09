@@ -81,6 +81,9 @@ These are experimental starting values, not validated constants. Unknown keys ar
     `hidden_content` limitation.
 
   Uninspected areas are recorded as limitations, never treated as empty.
+- **Covered content:** an element hidden under another opaque element (for example a fixed header) is
+  detected only inside the viewport at capture time. Elsewhere on the page, whether it is covered is
+  recorded as unknown, and the element counts as visible.
 - **Screenshots:** a full-page screenshot is evidence of one moment, not of every dynamic state.
 - **Element IDs:** they belong to one capture. A recapture gets a new capture ID, and approvals do not
   carry over to a changed page.
