@@ -33,6 +33,9 @@ from .models import (
 # Bump when decision rules change, so old proposals.json files stay identifiable.
 DETECTOR_VERSION = "1"
 
+# Container levels that internal spacing is measured in: the region's groups and their children.
+SPACING_DEPTH = 2
+
 
 def detect(
     elements: ElementSnapshot, groups: GroupSnapshot, cands: CandidateSnapshot, config: DetectorConfig
@@ -65,14 +68,15 @@ def detect(
 
 
 def _internal_gaps(members: list[VisualGroup], by_id: dict[str, VisualGroup]) -> list[float]:
-    """Positive vertical gaps between consecutive rows of children, inside every container of a region.
+    """Positive vertical gaps between consecutive rows of children, in the region's own containers and
+    the containers directly inside them: compact local groups, not every deeply nested detail.
 
     Only vertical gaps between stacked rows count: side-by-side children (horizontal gaps) are banded
     into one row first, so button gaps never mix with paragraph spacing.
     """
-    gaps, stack = [], list(members)
+    gaps, stack = [], [(g, 0) for g in members]
     while stack:
-        g = stack.pop()
+        g, depth = stack.pop()
         kids = [by_id[c] for c in g.child_ids if by_id[c].positioning in ("flow", "sticky")]
         rows = _bands(kids)
         for above, below in zip(rows, rows[1:]):
@@ -80,7 +84,8 @@ def _internal_gaps(members: list[VisualGroup], by_id: dict[str, VisualGroup]) ->
             top = min(k.bounds.y for k in below)
             if top - bottom > 0:
                 gaps.append(top - bottom)
-        stack.extend(kids)
+        if depth < SPACING_DEPTH - 1:
+            stack.extend((k, depth + 1) for k in kids)
     return gaps
 
 
@@ -167,8 +172,11 @@ def _decide(b: BoundaryCandidate, regions, by_id, styles, config: DetectorConfig
         opposing.append("both sides belong to one repeated collection")
     if ev.shared_painted_ancestor:
         opposing.append(f"same painted ancestor {ev.shared_painted_ancestor} continues across (weak)")
+    unknowns = []
     if ev.background_change is None:
-        opposing.append("background comparison unknown (complex painting)")
+        unknowns.append("background comparison (complex painting)")
+    if gap is None:
+        unknowns.append("content gap (a side has no foreground content)")
 
     independent = paint_change or landmark_transition or siblings
 
@@ -189,6 +197,7 @@ def _decide(b: BoundaryCandidate, regions, by_id, styles, config: DetectorConfig
             gap_ratio=ratio,
             supporting=supporting,
             opposing=opposing,
+            unknowns=unknowns,
             rules=rules,
             decision=decision,
             basis=basis,
@@ -214,6 +223,8 @@ def _decide(b: BoundaryCandidate, regions, by_id, styles, config: DetectorConfig
 
     if strong_gap:
         return result("ambiguous", "none", "5: strong gap without independent support")
+    if gap is None:
+        return result("ambiguous", "none", "5: content gap unknown and no structural support")
     if ratio is None:
         return result("ambiguous", "none", "5: no reliable spacing evidence and no structural support")
     return result("keep", "none", "4: tight coherent spacing, no transition: same section")
@@ -228,6 +239,9 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
     regions = {r.id: r for r in cands.regions}
     between = {(b.above_region_id, b.below_region_id): b for b in decided.values()}
     level0 = [r for r in cands.regions if r.level == 0 and r.role != "overlay"]
+    # Header, footer and overlay groups can sit inside a flow region (a header inside the hero wrapper,
+    # a fixed chat button inside a section). They are their own sections; flow sections carve them out.
+    reserved = {g for r in cands.regions if r.role != "flow" for g in r.group_ids}
 
     # Each unit is (region IDs, group IDs, role). A level-0 region with a decided inner split is replaced
     # by its sub-regions; groups the sub-regions do not cover (e.g. a sidebar) become their own unit.
@@ -241,11 +255,13 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
         pieces = [r]
         if subs and any(b.decision == "split" for b in inner):
             pieces = subs
-            covered = {g for s in subs for g in _subtree_ids(s.group_ids, by_id)}
-            leftover = [x for g in r.group_ids for x in _leftovers(g, covered, by_id)]
-            if leftover:
-                extras.append(([r.id], leftover, "flow"))
-                notes.append(f"{r.id}: inner sections promoted; side content {', '.join(leftover)} kept separately")
+            covered = {g for s in subs for g in _subtree_ids(s.group_ids, by_id)} | _subtree_ids(reserved, by_id)
+            for g in (x for g in r.group_ids for x in _leftovers(g, covered, by_id)):
+                # In-flow side content (a sidebar) becomes its own section; out-of-flow leftovers
+                # are allocated by overlap below like any other loose content.
+                if by_id[g].positioning in ("flow", "sticky"):
+                    extras.append(([r.id], [g], "flow"))
+                    notes.append(f"{r.id}: inner sections promoted; side content {g} kept as its own section")
         for i, p in enumerate(pieces):
             if units:
                 # The first piece meets the previous level-0 region across their level-0 boundary.
@@ -267,6 +283,12 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
         merged.append(_unit(rids, gids, role, above=join, inner=undecided))
     merged += [_unit(rids, gids, role) for rids, gids, role in extras]
     merged += [_unit([r.id], r.group_ids, "overlay") for r in cands.regions if r.role == "overlay"]
+    rank = {"header": 0, "flow": 1, "footer": 2, "overlay": 3}
+    merged.sort(key=lambda m: (rank[m["role"]], min(by_id[g].bounds.y for g in m["group_ids"])))  # stable
+
+    def claim(m) -> set[str]:
+        # Flow sections stop at reserved groups; header/footer/overlay sections own their whole subtree.
+        return _subtree_ids(m["group_ids"], by_id, stop=reserved if m["role"] == "flow" else set())
 
     sections: list[SectionProposal] = []
     flow_count = 0
@@ -278,6 +300,10 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
             label = m["role"].capitalize()
         gs = [by_id[g] for g in m["group_ids"]]
         adjoining = [b for b in (m["above"], m["below"]) if b is not None]
+        owned = claim(m)
+        carved = sorted(
+            g for g in reserved if g not in m["group_ids"] and g in _subtree_ids(m["group_ids"], by_id)
+        ) if m["role"] == "flow" else []
         sections.append(
             SectionProposal(
                 id=f"s{i}",
@@ -286,31 +312,32 @@ def _assemble(cands: CandidateSnapshot, decided: dict[str, BoundaryProposal], by
                 role=m["role"],
                 region_ids=m["region_ids"],
                 group_ids=m["group_ids"],
-                element_ids=[e for g in gs for e in _members(g, by_id)],
+                element_ids=[e for g in sorted(owned, key=_group_order) for e in by_id[g].element_ids],
                 bounds=_union([g.bounds for g in gs]),
                 boundary_above_id=m["above"].id if m["above"] else None,
                 boundary_below_id=m["below"].id if m["below"] else None,
                 ambiguous=any(b.decision == "ambiguous" for b in adjoining + m["inner"]),
                 overlaps=[],
-                notes=[f"merged across {b}" for b in m["kept"]],
+                notes=[f"merged across {b}" for b in m["kept"]] + [f"{g} carved out: its own section" for g in carved],
             )
         )
     # Out-of-flow content no region claimed (e.g. an absolute image in a wrapper) is allocated to the
     # flow section it overlaps most, explicitly, rather than dropped.
-    claimed = {g for s in sections for g in _subtree_ids(s.group_ids, by_id)}
+    claims = {s.id: claim(m) for s, m in zip(sections, merged)}
+    claimed = {g for c in claims.values() for g in c}
     flow = [s for s in sections if s.role == "flow"]
     for g in by_id.values():
         if g.kind != "content" or g.id in claimed or not flow:
             continue
-        top, bottom = g.bounds.y, g.bounds.y + g.bounds.height
-        best = max(flow, key=lambda s: min(bottom, s.bounds.y + s.bounds.height) - max(top, s.bounds.y))
+        best = max(flow, key=lambda s: _overlap(g.bounds, s.bounds))
         best.group_ids.append(g.id)
-        best.element_ids += _members(g, by_id)
-        best.notes.append(f"out-of-flow content {g.id} allocated by vertical overlap")
+        best.element_ids += by_id[g.id].element_ids  # content groups have no child groups
+        best.notes.append(f"out-of-flow content {g.id} allocated by overlap")
+        claims[best.id].add(g.id)
         claimed.add(g.id)
 
     _link_overlaps(sections)
-    claimed = [g for s in sections for g in _subtree_ids(s.group_ids, by_id)]
+    claimed = [g for c in claims.values() for g in c]
     if len(claimed) != len(set(claimed)):
         raise ValueError("a group was assigned to more than one section")
     unassigned = [g for g in by_id if g not in set(claimed)]
@@ -327,13 +354,25 @@ def _unit(region_ids, group_ids, role, above=None, inner=()) -> dict:
     }
 
 
-def _subtree_ids(group_ids, by_id) -> set[str]:
+def _subtree_ids(group_ids, by_id, stop: set[str] = frozenset()) -> set[str]:
+    """Groups under group_ids, not descending into (or including) `stop` groups below the roots."""
     out, stack = set(), list(group_ids)
     while stack:
         g = stack.pop()
         out.add(g)
-        stack.extend(by_id[g].child_ids)
+        stack.extend(c for c in by_id[g].child_ids if c not in stop)
     return out
+
+
+def _overlap(a, b) -> tuple[float, float]:
+    """(shared area, shared vertical extent): area decides, vertical extent breaks ties."""
+    w = min(a.x + a.width, b.x + b.width) - max(a.x, b.x)
+    h = min(a.y + a.height, b.y + b.height) - max(a.y, b.y)
+    return max(w, 0) * max(h, 0), h
+
+
+def _group_order(gid: str) -> int:
+    return int(gid[1:])  # IDs are assigned in document pre-order
 
 
 def _leftovers(gid, covered, by_id) -> list[str]:
@@ -343,11 +382,6 @@ def _leftovers(gid, covered, by_id) -> list[str]:
     if not (_subtree_ids([gid], by_id) & covered):
         return [gid]
     return [x for c in by_id[gid].child_ids for x in _leftovers(c, covered, by_id)]
-
-
-def _members(g: VisualGroup, by_id) -> list[str]:
-    """Source elements of a group and all groups inside it."""
-    return [e for sub in _subtree_ids([g.id], by_id) for e in by_id[sub].element_ids]
 
 
 def _link_overlaps(sections: list[SectionProposal]) -> None:

@@ -115,6 +115,10 @@ def detect(
     depth: int = typer.Option(0, min=0, help="Also print the visual-group tree to this depth."),
 ) -> None:
     """Analyse saved capture evidence (no site visit) and propose the page's major sections."""
+    if config is None and Path("detector.toml").is_file():
+        config = Path("detector.toml")  # a detector.toml in the working directory applies by default
+    if config is not None:
+        console.print(f"[dim]Using config {config}[/]")
     try:
         cfg = DetectorConfig.model_validate(tomllib.loads(config.read_text())) if config else DetectorConfig()
     except (tomllib.TOMLDecodeError, ValidationError) as e:

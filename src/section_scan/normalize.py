@@ -20,7 +20,7 @@ from .models import (
 NORMALIZER_VERSION = "1"
 
 # Edges within this many CSS px count as the same box.
-# ponytail: a fixed tolerance; move to detector.toml when milestone 5 introduces configuration.
+# ponytail: structural constant; promote to detector.toml if evaluation shows it needs tuning.
 GEOMETRY_TOLERANCE = 2.0
 
 LANDMARK_TAGS = {"header", "footer", "main", "nav", "aside", "section", "article", "form"}

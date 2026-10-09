@@ -20,7 +20,7 @@ from .models import (
 # Bump when candidate rules change, so old candidates.json files stay identifiable.
 CANDIDATES_VERSION = "1"
 
-# ponytail: fixed tolerances; move to detector.toml when milestone 5 introduces configuration.
+# ponytail: structural constant; promote to detector.toml if evaluation shows it needs tuning.
 TOLERANCE = 2.0  # CSS px treated as touching / not crossing
 TOP_EDGE = 10.0  # a fallback header must start this close to the top
 HEADER_MAX_TOP = 200.0  # a header landmark must start within this distance of the top...

@@ -65,12 +65,19 @@ def test_gap_is_judged_relative_to_internal_spacing(tmp_path):
 
 
 def test_large_internal_hero_spacing_does_not_split_the_hero(tmp_path):
-    elements, _, cands, props = run_detector(capture_html(tmp_path, """
+    # The hero's call-to-action panel is painted (narrower than the page), so the hero holds a level-1
+    # candidate boundary across 240px of internal whitespace: a big gap, but no section transition.
+    p = "<p style='margin: 0 0 24px'>{}</p>"
+    elements, _, cands, props = run_detector(capture_html(tmp_path, f"""
         <div style="padding: 60px 40px; background: rgb(20, 20, 40); color: white">
-          <div><h1 style="margin: 0 0 16px">Headline</h1><p style="margin: 0">Intro</p></div>
-          <div style="margin-top: 240px"><p style="margin: 0 0 16px">Call to action</p><button>Start</button></div>
+          <div>{p.format("Headline")}{p.format("Intro one")}<p style="margin: 0">Intro two</p></div>
+          <div style="width: 600px; margin: 240px auto 0; padding: 24px; background: rgb(60, 60, 110)">
+            {p.format("Call to action")}<p style="margin: 0">Start now</p></div>
         </div>
-        <div style="padding: 60px 40px"><h2 style="margin: 0 0 16px">Features</h2><p style="margin: 0">Text</p></div>"""))
+        <div style="padding: 60px 40px">{p.format("Features")}<p style="margin: 0">Text</p></div>"""))
+    inner = [b for b in props.boundaries if b.level == 1]
+    assert len(inner) == 1 and inner[0].gap_ratio > 3  # a strong relative gap really is inside the hero...
+    assert inner[0].decision != "split"  # ...but without a section transition it does not split it
     hero = section_of(elements, props, "Headline")
     assert section_of(elements, props, "Call to action") is hero
     assert section_of(elements, props, "Features") is not hero
@@ -217,3 +224,61 @@ def test_promoted_sidebar_layout_keeps_the_sidebar(tmp_path):
     assert any("side content" in n for n in props.notes)
     # Beside the posts, not over them: vertical ranges overlap, areas do not.
     assert side.bounds.y < two.bounds.y + two.bounds.height and one.bounds.y < side.bounds.y + side.bounds.height
+
+
+@pytest.mark.parametrize(
+    "body, own_section",
+    [
+        # A transparent header nested in the hero wrapper (common theme pattern).
+        ("<div style='position: relative; background: rgb(20, 20, 40)'>"
+         "<header style='position: absolute; top: 0; left: 0; right: 0; height: 60px'><p>Site header</p></header>"
+         "<div style='height: 500px'><h1>Hero</h1></div></div>"
+         "<div style='height: 400px'><h2>Next</h2></div>", "Site header"),
+        # A fixed chat button inside a section.
+        ("<section style='height: 500px'><h2>One</h2>"
+         "<div style='position: fixed; right: 10px; bottom: 10px'><p>Chat</p></div></section>"
+         "<section style='height: 400px'><h2>Two</h2></section>", "Chat"),
+        # A footer wrapped together with a call-to-action.
+        ("<section style='height: 500px'><h2>One</h2></section>"
+         "<div><div style='height: 200px'><p>Final call</p></div><footer style='padding: 40px'><p>Footer text</p></footer></div>",
+         "Footer text"),
+    ],
+)
+def test_nested_header_footer_or_overlay_is_carved_out_not_a_crash(tmp_path, body, own_section):
+    elements, groups, cands, props = run_detector(capture_html(tmp_path, body))
+    owner = section_of(elements, props, own_section)
+    assert owner.role in ("header", "footer", "overlay")
+    assert any("carved out" in n for s in props.sections for n in s.notes)
+    elements_seen = [e for s in props.sections for e in s.element_ids]
+    assert len(elements_seen) == len(set(elements_seen))  # no element in two sections
+
+
+def test_promoted_layout_orders_side_content_and_allocates_loose_badges(tmp_path):
+    elements, _, cands, props = run_detector(capture_html(tmp_path, """
+        <header style="height: 60px"><p>Site</p></header>
+        <div style="display: flex; position: relative">
+          <main style="flex: 1">
+            <section style="height: 300px"><h2>Post one</h2></section>
+            <section style="height: 300px"><h2>Post two</h2></section>
+          </main>
+          <aside style="width: 250px"><p>Sidebar</p></aside>
+          <span style="position: absolute; top: 20px; left: 20px">Badge</span>
+        </div>
+        <footer style="height: 80px"><p>Foot</p></footer>"""))
+    side, badge = section_of(elements, props, "Sidebar"), section_of(elements, props, "Badge")
+    assert badge is section_of(elements, props, "Post one")  # allocated by overlap, not lumped with the sidebar
+    assert any("allocated" in n for n in badge.notes)
+    footer = next(s for s in props.sections if s.role == "footer")
+    assert side.order < footer.order  # side content sits among the flow sections, not after the footer
+    assert [s.order for s in props.sections] == list(range(len(props.sections)))
+
+
+def test_detector_toml_in_working_directory_applies_by_default(tmp_path, monkeypatch):
+    out = capture_html(tmp_path / "cap", two_blocks(160, inner_px=16, extra_a="; padding: 40px", extra_b="padding: 40px"))
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "detector.toml").write_text("gap_ratio_threshold = 20.0\n")
+    monkeypatch.chdir(work)
+    result = CliRunner().invoke(app, ["detect", str(out)])
+    assert result.exit_code == 0 and "Using config detector.toml" in result.output
+    assert ProposalSnapshot.model_validate_json((out / "proposals.json").read_text()).config.gap_ratio_threshold == 20.0

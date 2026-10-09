@@ -284,6 +284,7 @@ class BoundaryProposal(BaseModel):
     gap_ratio: float | None  # g / spacing_scale; None when neither side has reliable spacing
     supporting: list[str]
     opposing: list[str]
+    unknowns: list[str]  # evidence that could not be measured: absent, not for or against
     rules: list[str]  # rule outcomes in the order they were checked
     decision: Literal["keep", "split", "ambiguous"]  # keep = same section; split = section boundary
     basis: Literal["landmark", "gap", "visual", "structural", "none"]
