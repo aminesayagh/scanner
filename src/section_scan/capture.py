@@ -1,0 +1,186 @@
+import struct
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page, sync_playwright
+
+from .models import Browser, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
+
+
+@dataclass(frozen=True)
+class Limits:
+    """Upper bounds so slow or infinitely loading pages always finish with a recorded outcome."""
+
+    nav_timeout_s: float = 30
+    fonts_timeout_s: float = 5
+    images_timeout_s: float = 10
+    stability_timeout_s: float = 5
+    max_scroll_steps: int = 60
+    max_scroll_seconds: float = 30
+    max_page_height: float = 40_000
+    scroll_pause_ms: int = 250
+    screenshot_attempts: int = 3
+
+
+# Cheap layout fingerprint: if page size or element count moves, the layout is still changing.
+_LAYOUT_SIGNATURE = """() => {
+  const s = document.scrollingElement || document.documentElement;
+  return [s.scrollWidth, s.scrollHeight, document.getElementsByTagName('*').length];
+}"""
+
+_FONTS_READY = """(ms) => Promise.race([
+  document.fonts.ready.then(() => true),
+  new Promise(r => setTimeout(() => r(false), ms)),
+])"""
+
+_IMAGES_READY = """(ms) => new Promise(resolve => {
+  const pending = [...document.images].filter(i => !i.complete);
+  let left = pending.length;
+  if (!left) return resolve(true);
+  const done = () => { if (--left === 0) resolve(true); };
+  pending.forEach(i => {
+    i.addEventListener('load', done, {once: true});
+    i.addEventListener('error', done, {once: true});
+  });
+  setTimeout(() => resolve(false), ms);
+})"""
+
+_SCROLL_STATE = """() => {
+  const s = document.scrollingElement || document.documentElement;
+  return [window.scrollY, window.innerHeight, s.scrollHeight];
+}"""
+
+
+def capture(
+    url: str,
+    out_dir: Path,
+    *,
+    width: int,
+    height: int,
+    scale: float = 1,
+    headed: bool = False,
+    wait_for_operator: Callable[[], None] | None = None,
+    limits: Limits = Limits(),
+) -> Manifest:
+    """Capture one URL into out_dir. Always writes manifest.json, including on failure."""
+    if (out_dir / "manifest.json").exists():
+        raise FileExistsError(f"{out_dir} already holds a capture; captures are immutable, choose a new --output")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = Manifest(
+        capture_id=uuid.uuid4().hex,
+        status="failed",
+        input_url=url,
+        captured_at=datetime.now(UTC),
+        viewport=Viewport(width=width, height=height),
+        device_scale_factor=scale,
+        readiness=Readiness(manual=wait_for_operator is not None),
+    )
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=not headed)
+            manifest.browser = Browser(name="chromium", version=browser.version, headless=not headed)
+            context = browser.new_context(viewport={"width": width, "height": height}, device_scale_factor=scale)
+            page = context.new_page()
+            _run(page, url, out_dir, manifest, wait_for_operator, limits)
+            browser.close()
+    except PlaywrightError as e:
+        manifest.status = "failed"
+        manifest.error = str(e)
+
+    (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
+    return manifest
+
+
+def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits: Limits) -> None:
+    response = page.goto(url, wait_until="domcontentloaded", timeout=limits.nav_timeout_s * 1000)
+    manifest.final_url = page.url
+    if response is not None:
+        manifest.http_status = response.status
+        if response.status >= 400:
+            manifest.error = f"HTTP {response.status} from {page.url}"
+            return
+
+    if wait_for_operator:
+        wait_for_operator()
+
+    r = manifest.readiness
+    r.fonts_ready = page.evaluate(_FONTS_READY, limits.fonts_timeout_s * 1000)
+    r.layout_stable_before_scroll = _wait_stable(page, limits.stability_timeout_s)
+
+    manifest.scroll = _scroll_pass(page, limits)
+
+    page.evaluate("() => window.scrollTo(0, 0)")
+    r.images_ready = page.evaluate(_IMAGES_READY, limits.images_timeout_s * 1000)
+    r.layout_stable_before_screenshot = _wait_stable(page, limits.stability_timeout_s)
+    x, y = page.evaluate("() => [window.scrollX, window.scrollY]")
+    manifest.scroll_reference = Point(x=x, y=y)
+
+    manifest.screenshot = _screenshot(page, out_dir / "screenshot.png", limits.screenshot_attempts)
+    complete = manifest.scroll.truncated_reason is None and manifest.screenshot.layout_consistent
+    manifest.status = "complete" if complete else "incomplete"
+
+
+def _wait_stable(page: Page, timeout_s: float, interval_ms: int = 250, samples: int = 3) -> bool:
+    """True once the layout signature is identical across `samples` consecutive samples."""
+    deadline = time.monotonic() + timeout_s
+    last, same = None, 0
+    while time.monotonic() < deadline:
+        sig = page.evaluate(_LAYOUT_SIGNATURE)
+        same = same + 1 if sig == last else 0
+        if same >= samples - 1:
+            return True
+        last = sig
+        page.wait_for_timeout(interval_ms)
+    return False
+
+
+def _scroll_pass(page: Page, limits: Limits) -> ScrollPass:
+    """Scroll one viewport at a time to trigger lazy loading, stopping at the bottom or a limit."""
+    start = time.monotonic()
+    steps = 0
+    prev_y = None
+    while True:
+        y, inner, page_height = page.evaluate(_SCROLL_STATE)
+        if y + inner >= page_height - 1:
+            return ScrollPass(steps=steps, reached_bottom=True, truncated_reason=None, page_height=page_height)
+        reason = None
+        if y == prev_y:
+            # Window did not move although content remains: a nested scroller or a scroll lock.
+            reason = "stalled"
+        elif page_height > limits.max_page_height:
+            reason = "max_height"
+        elif steps >= limits.max_scroll_steps:
+            reason = "max_steps"
+        elif time.monotonic() - start >= limits.max_scroll_seconds:
+            reason = "max_seconds"
+        if reason:
+            return ScrollPass(steps=steps, reached_bottom=False, truncated_reason=reason, page_height=page_height)
+        prev_y = y
+        page.evaluate("() => window.scrollBy(0, window.innerHeight)")
+        steps += 1
+        page.wait_for_timeout(limits.scroll_pause_ms)
+
+
+def _screenshot(page: Page, path: Path, max_attempts: int) -> Screenshot:
+    """Full-page screenshot, retried while the layout changes underneath it."""
+    for attempt in range(1, max_attempts + 1):
+        before = page.evaluate(_LAYOUT_SIGNATURE)
+        png = page.screenshot(path=path, full_page=True, animations="disabled")
+        consistent = page.evaluate(_LAYOUT_SIGNATURE) == before
+        if consistent:
+            break
+    width_px, height_px = struct.unpack(">II", png[16:24])  # PNG IHDR width/height
+    return Screenshot(
+        path=path.name,
+        width_px=width_px,
+        height_px=height_px,
+        animations_frozen=True,
+        attempts=attempt,
+        layout_consistent=consistent,
+    )

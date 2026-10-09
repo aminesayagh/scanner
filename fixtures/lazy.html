@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Lazy</title></head><body style="margin:0">
+<div style="height:2500px">Top content</div>
+<div id="lazy"></div>
+<script>
+  // Lower content only appears once it scrolls into view.
+  const slot = document.getElementById('lazy');
+  new IntersectionObserver(([e], obs) => {
+    if (e.isIntersecting) { slot.innerHTML = '<p id="loaded" style="height:800px">Lazy content</p>'; obs.disconnect(); }
+  }).observe(slot);
+</script>
+</body></html>
