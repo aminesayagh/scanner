@@ -301,6 +301,7 @@ def test_report_json_lists_sections_with_position_flags_role_and_message_only(ru
     assert doc["link"].startswith("file://") and doc["link"].endswith("candidates-landmarks.html")
     assert doc["title"] == "Candidates (landmarks)" and doc["description"] == "A page with every landmark case."
     assert all(set(s) == {"id", "position", "flags", "role", "message"} for s in doc["sections"])
+    assert all(isinstance(s["message"], list) for s in doc["sections"])
     assert all(set(s["position"]) == {"x", "y", "width", "height"} for s in doc["sections"])
     ys = [s["position"]["y"] for s in doc["sections"]]
     assert ys == sorted(ys)  # top to bottom
@@ -311,12 +312,13 @@ def test_report_json_lists_sections_with_position_flags_role_and_message_only(ru
 def test_report_json_message_lists_section_content_with_tags(run):
     cli("report", run)
     doc = json.loads((run / "report.json").read_text())
-    contents = [s["message"]["content"] for s in doc["sections"]]
-    hero = next(c for c in contents if {"tag": "h1", "text": "Hero title"} in c[0].get("children", []))
-    assert hero == [{"tag": "group", "children": [{"tag": "h1", "text": "Hero title"}, {"tag": "p", "text": "Hero copy"}]}]
+    contents = [s["message"] for s in doc["sections"]]
+    # A lone group is unwrapped: its items are the message.
+    hero = next(c for c in contents if {"tag": "h1", "text": "Hero title"} in c)
+    assert hero == [{"tag": "h1", "text": "Hero title"}, {"tag": "p", "text": "Hero copy"}]
     # A paragraph is one entry with its inline link; the link's text is not listed again.
-    plain = next(c for c in contents if {"tag": "h2", "text": "Plain"} in c[0].get("children", []))
-    assert plain == [{"tag": "group", "children": [{"tag": "h2", "text": "Plain"}, {"tag": "p", "text": "Plain text with a link."}]}]
+    plain = next(c for c in contents if {"tag": "h2", "text": "Plain"} in c)
+    assert plain == [{"tag": "h2", "text": "Plain"}, {"tag": "p", "text": "Plain text with a link."}]
     features = next(c for c in contents if {"tag": "h2", "text": "Features"} in c)
     assert {"tag": "p", "text": "New"} in features  # loose text on its own branch
     assert {"tag": "group", "children": [{"tag": "h3", "text": t} for t in ("One", "Two", "Three")]} in features
@@ -337,7 +339,7 @@ def test_report_json_groups_list_items_under_their_list_without_double_nesting(t
     out = tmp_path / "run"
     assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
     assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
-    content = next(s for s in json.loads((out / "report.json").read_text())["sections"] if s["role"] == "flow")["message"]["content"]
+    content = next(s for s in json.loads((out / "report.json").read_text())["sections"] if s["role"] == "flow")["message"]
     assert content == [
         {"tag": "h1", "text": "Plans"},
         {"tag": "p", "text": "Pick one of these."},
@@ -371,7 +373,7 @@ def test_report_json_section_id_is_an_anchor_wrapping_all_its_content(tmp_path):
         entry = content[0]
         return entry["children"][0]["text"] if "children" in entry else entry["text"]
 
-    ids = {first_text(s["message"]["content"]): s["id"] for s in json.loads((out / "report.json").read_text())["sections"]}
+    ids = {first_text(s["message"]): s["id"] for s in json.loads((out / "report.json").read_text())["sections"]}
     assert ids["Intro"] == "intro"  # the section element itself
     assert ids["Pricing"] == "pricing"  # an inner wrapper around all the content, not the heading-only one
     assert ids["FAQ"] is None  # only the heading has an id; "page" also wraps other sections
@@ -401,14 +403,14 @@ def test_report_json_content_follows_dom_branches_one_level_deep(tmp_path):
     assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
     sections = json.loads((out / "report.json").read_text())["sections"]
     header = next(s for s in sections if s["role"] == "header")["message"]
-    assert header["content"] == [
+    assert header == [
         {"tag": "p", "text": "11:26 PM, Morocco"},
         {"tag": "group", "children": [{"tag": "text", "text": "Home"}, {"tag": "text", "text": "/"},
                                       {"tag": "text", "text": "Projects"}]},
         {"tag": "group", "children": [{"tag": "text", "text": "About us"}, {"tag": "text", "text": "Get in touch"}]},
     ]
-    plans = next(s for s in sections if "Plans" in json.dumps(s["message"]["content"]))
-    assert plans["message"]["content"] == [
+    plans = next(s for s in sections if "Plans" in json.dumps(s["message"]))
+    assert plans["message"] == [
         {"tag": "group", "children": [{"tag": "h2", "text": "Plans"}, {"tag": "p", "text": "Pick one"}]},
         {"tag": "ul", "children": [{"tag": "li", "text": "Starter"}, {"tag": "li", "text": "Pro"},
                                    {"tag": "li", "text": "Nested"}]},
@@ -416,5 +418,5 @@ def test_report_json_content_follows_dom_branches_one_level_deep(tmp_path):
     ]
     # One level only: no group ever holds another group.
     for s in sections:
-        for entry in s["message"]["content"]:
+        for entry in s["message"]:
             assert all("children" not in child for child in entry.get("children", []))

@@ -11,7 +11,6 @@ from pathlib import Path
 from .models import (
     ElementSnapshot,
     Manifest,
-    Message,
     MessageGroup,
     MessageItem,
     ProposalSnapshot,
@@ -144,13 +143,17 @@ def _write_json(run: Path, manifest: Manifest, rows, members: dict[str, list[str
 TEXT_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"}
 
 
-def _message(element_ids: list[str], by_id) -> Message:
+def _message(element_ids: list[str], by_id) -> list[MessageItem | MessageGroup]:
     """The section's visible text in page order, grouped by the page's DOM branches (see _by_branch).
 
     A heading, paragraph or list item is one entry with its whole text (inline links included), so text
-    inside it is not repeated; other visible text is "text". Nesting is never more than one level.
+    inside it is not repeated; other visible text is "text". Nesting is never more than one level, and
+    a group with no siblings is unwrapped: its items are the message.
     """
-    return Message(content=_by_branch(set(element_ids), by_id))
+    entries = _by_branch(set(element_ids), by_id)
+    if len(entries) == 1 and isinstance(entries[0], MessageGroup) and entries[0].tag == "group":
+        return list(entries[0].children)
+    return entries
 
 
 def _text_of(e) -> str:

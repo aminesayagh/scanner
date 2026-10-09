@@ -471,18 +471,14 @@ class MessageGroup(BaseModel):
     children: list[MessageItem]
 
 
-class Message(BaseModel):
-    # The section's visible text in page order, following its DOM branches: one entry per branch,
-    # a group when the branch holds several items. One level deep.
-    content: list[MessageItem | MessageGroup]
-
-
 class ReportSection(BaseModel):
     id: str | None  # id attribute of an element wrapping all of the section's content, for scrolling to it
     position: ReportPosition
     flags: list[str]
     role: Literal["header", "footer", "flow", "overlay"]
-    message: Message
+    # The section's visible text in page order, following its DOM branches: one entry per branch, a group
+    # when the branch holds several items (a lone group is unwrapped). One level deep.
+    message: list[MessageItem | MessageGroup]
 
 
 class ReportDocument(BaseModel):
