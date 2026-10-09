@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Extraction cases</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  #top { position: fixed; top: 0; left: 0; right: 0; height: 60px; background: rgb(17, 102, 204); }
+  #hero { margin-top: 60px; height: 400px; background: rgb(220, 30, 30); }
+  #wrap { display: contents; }
+  .half { height: 150px; }
+  #a { background: rgb(240, 200, 0); }
+  #b { background: rgb(120, 0, 160); }
+  #mobile { display: none; }
+  #stick { position: sticky; top: 0; height: 40px; }
+  #ghost { visibility: hidden; height: 20px; }
+  .sr-only { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+  #faded { opacity: 0; }
+  #scroller { height: 100px; overflow: auto; }
+  #spacer { height: 1200px; }
+  #below { height: 300px; background: rgb(30, 160, 60); }
+</style></head>
+<body>
+<header id="top"><a href="#">Logo</a></header>
+<nav id="mobile">Mobile menu</nav>
+<section id="hero"><h1>Hero title</h1></section>
+<div id="wrap"><div id="a" class="half">Part A</div><div id="b" class="half">Part B</div></div>
+<div id="stick">Sticky bar</div>
+<div id="ghost">Ghost text</div>
+<span class="sr-only">Screen reader only</span>
+<div id="faded"><p>Faded child</p></div>
+<div id="scroller"><div style="height: 400px">Scrolled content</div></div>
+<canvas width="50" height="50"></canvas>
+<iframe srcdoc="<p>inside</p>" style="height: 50px"></iframe>
+<div id="spacer"></div>
+<section id="below"><h2>Below the fold</h2></section>
+</body></html>

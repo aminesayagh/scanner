@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SCHEMA_VERSION = 1
 
@@ -62,6 +62,64 @@ class Manifest(BaseModel):
     device_scale_factor: float = Field(gt=0, allow_inf_nan=False)
     scroll_reference: Point | None = None
     browser: Browser | None = None
+    extractor_version: str | None = None
     readiness: Readiness
     scroll: ScrollPass | None = None
     screenshot: Screenshot | None = None
+
+
+class Rect(BaseModel):
+    """CSS pixels."""
+
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+    width: float = Field(ge=0, allow_inf_nan=False)
+    height: float = Field(ge=0, allow_inf_nan=False)
+
+
+class Visibility(BaseModel):
+    css_visibility: str
+    opacity: float = Field(ge=0, le=1)
+    transparent_ancestor: bool  # an ancestor has opacity 0, so this element paints nothing
+    has_box: bool  # non-zero width and height
+    offscreen: bool  # rendered, but entirely outside the document area (e.g. "sr-only" tricks)
+    visible: bool  # all of the above allow it to be seen
+
+
+class Element(BaseModel):
+    id: str
+    parent_id: str | None
+    child_ids: list[str]
+    tag: str
+    role: str | None  # explicit role attribute only; landmark tags are read from `tag`
+    text: str  # whitespace-collapsed own text (not descendants'), truncated
+    box: Literal["normal", "contents"]  # "contents": no own box; bounds are the union of its content
+    # Fixed/sticky elements are measured where they sat at capture; see `positioning`.
+    bounds: Rect  # document space
+    viewport_bounds: Rect  # viewport space at the scroll reference
+    positioning: Literal["flow", "absolute", "sticky", "fixed"]  # fixed/sticky include inherited from ancestors
+    styles: dict[str, str]
+    visibility: Visibility
+    limitations: list[Literal["iframe", "canvas", "shadow_root", "scroll_container"]]
+
+
+class ElementSnapshot(BaseModel):
+    schema_version: int = SCHEMA_VERSION
+    capture_id: str
+    extractor_version: str
+    scroll: Point
+    document: Rect
+    elements: list[Element]
+
+    @model_validator(mode="after")
+    def _check_references(self) -> "ElementSnapshot":
+        by_id = {e.id: e for e in self.elements}
+        if len(by_id) != len(self.elements):
+            raise ValueError("duplicate element IDs")
+        for e in self.elements:
+            if e.parent_id is not None and e.id not in by_id.get(e.parent_id, e).child_ids:
+                raise ValueError(f"{e.id}: parent {e.parent_id} missing or does not list it as a child")
+            for c in e.child_ids:
+                if c not in by_id or by_id[c].parent_id != e.id:
+                    raise ValueError(f"{e.id}: child {c} missing or has another parent")
+        return self

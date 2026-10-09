@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 
 from .capture import capture as run_capture
+from .overlay import write_overlay
 
 app = typer.Typer(help="Capture a webpage, propose its major sections, review them, and export JSON.")
 console = Console()
@@ -68,3 +69,20 @@ def capture(
     timed_out = [k for k, v in m.readiness.model_dump(exclude={"manual"}).items() if v is False]
     if timed_out:
         console.print(f"[yellow]Readiness waits that timed out:[/] {', '.join(timed_out)}")
+
+
+@app.command()
+def overlay(
+    run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory from `capture`."),
+    ids: list[str] = typer.Option([], "--id", help="Element ID to draw (repeatable). Default: the body's children."),
+) -> None:
+    """Draw element boxes over the screenshot to check that captured geometry lines up."""
+    if not (run / "elements.json").exists():
+        console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
+        raise typer.Exit(2)
+    try:
+        path = write_overlay(run, ids)
+    except KeyError as e:
+        console.print(f"[red]Error:[/] {e.args[0]}")
+        raise typer.Exit(2)
+    console.print(f"Overlay written → {path}")

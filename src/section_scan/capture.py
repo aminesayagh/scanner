@@ -8,8 +8,13 @@ from pathlib import Path
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
+from pydantic import ValidationError
 
-from .models import Browser, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
+from .models import Browser, ElementSnapshot, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
+
+# Bump when browser_extract.js changes what it measures, so old element files stay identifiable.
+EXTRACTOR_VERSION = "1"
+_EXTRACT = (Path(__file__).parent / "browser_extract.js").read_text()
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,13 @@ _IMAGES_READY = """(ms) => new Promise(resolve => {
     i.addEventListener('error', done, {once: true});
   });
   setTimeout(() => resolve(false), ms);
+})"""
+
+# Mirrors Playwright's screenshot animations="disabled": finish finite animations, cancel infinite ones,
+# so element extraction and the screenshot see the same frozen state.
+_FREEZE_ANIMATIONS = """() => document.getAnimations().forEach(a => {
+  const end = a.effect && a.effect.getComputedTiming().endTime;
+  if (end !== undefined && end !== Infinity) a.finish(); else a.cancel();
 })"""
 
 _SCROLL_STATE = """() => {
@@ -93,6 +105,9 @@ def capture(
     except PlaywrightError as e:
         manifest.status = "failed"
         manifest.error = str(e)
+    except ValidationError as e:
+        manifest.status = "failed"
+        manifest.error = f"Extracted elements failed validation: {e}"
     except (EOFError, KeyboardInterrupt):
         manifest.status = "failed"
         manifest.error = "Capture cancelled by the operator"
@@ -133,7 +148,10 @@ def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits
     x, y = page.evaluate("() => [window.scrollX, window.scrollY]")
     manifest.scroll_reference = Point(x=x, y=y)
 
-    manifest.screenshot = _screenshot(page, out_dir / "screenshot.png", limits.screenshot_attempts)
+    manifest.screenshot, raw = _snapshot(page, out_dir / "screenshot.png", limits.screenshot_attempts)
+    snapshot = ElementSnapshot(capture_id=manifest.capture_id, extractor_version=EXTRACTOR_VERSION, **raw)
+    (out_dir / "elements.json").write_text(snapshot.model_dump_json(indent=1))
+    manifest.extractor_version = EXTRACTOR_VERSION
     manifest.final_url = page.url  # the page may still redirect itself during readiness waits
     complete = (
         manifest.scroll.truncated_reason is None
@@ -184,16 +202,18 @@ def _scroll_pass(page: Page, limits: Limits) -> ScrollPass:
         page.wait_for_timeout(limits.scroll_pause_ms)
 
 
-def _screenshot(page: Page, path: Path, max_attempts: int) -> Screenshot:
-    """Full-page screenshot, retried while the layout changes underneath it."""
+def _snapshot(page: Page, path: Path, max_attempts: int) -> tuple[Screenshot, dict]:
+    """Element extraction plus full-page screenshot as one pair, retried while the layout changes under it."""
     for attempt in range(1, max_attempts + 1):
+        page.evaluate(_FREEZE_ANIMATIONS)
         before = page.evaluate(_LAYOUT_SIGNATURE)
+        raw = page.evaluate(_EXTRACT)
         png = page.screenshot(path=path, full_page=True, animations="disabled")
         consistent = page.evaluate(_LAYOUT_SIGNATURE) == before
         if consistent:
             break
     width_px, height_px = struct.unpack(">II", png[16:24])  # PNG IHDR width/height
-    return Screenshot(
+    screenshot = Screenshot(
         path=path.name,
         width_px=width_px,
         height_px=height_px,
@@ -201,3 +221,4 @@ def _screenshot(page: Page, path: Path, max_attempts: int) -> Screenshot:
         attempts=attempt,
         layout_consistent=consistent,
     )
+    return screenshot, raw
