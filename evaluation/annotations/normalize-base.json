@@ -1,0 +1,10 @@
+{
+  "page": "fixtures/normalize-base.html (1000x700)",
+  "annotator": "fixture author: the intended sections",
+  "sections": [
+    ["Home", "Pricing"],
+    ["Hero title", "Hero text"],
+    ["Features", "One", "Three", "Read"],
+    ["Footer text"]
+  ]
+}

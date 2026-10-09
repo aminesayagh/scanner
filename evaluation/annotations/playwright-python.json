@@ -1,0 +1,15 @@
+{
+  "page": "https://playwright.dev/python/ (capture of 9 Oct 2026, 1280x800)",
+  "annotator": "Claude, from the screenshot; to be verified by a person",
+  "sections": [
+    ["Playwright for Python", "Docs"],
+    ["enables reliable web automation"],
+    ["Playwright Test", "Playwright MCP"],
+    ["Built for testing"],
+    ["Built for AI agents"],
+    ["Powerful tooling"],
+    ["Any browser. Any platform."],
+    ["Chosen by companies and open source projects"],
+    ["Copyright © 2026 Microsoft"]
+  ]
+}

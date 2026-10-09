@@ -1,0 +1,15 @@
+{
+  "page": "fixtures/candidates-landmarks.html (1000x700)",
+  "annotator": "fixture author: the intended sections",
+  "sections": [
+    ["Home", "Pricing"],
+    ["Promo bar"],
+    ["Hero title", "Hero copy"],
+    ["Features", "One", "Three"],
+    ["Part A"],
+    ["Part B"],
+    ["Plain", "Plain text"],
+    ["Article", "Main column", "Side column"],
+    ["Footer text"]
+  ]
+}

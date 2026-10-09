@@ -207,6 +207,23 @@ def _decide(b: BoundaryCandidate, regions, by_id, styles, config: DetectorConfig
         return result("split", "landmark", "1: header/footer landmark keeps its own section")
     rules.append("1: no header/footer landmark involved")
 
+    if config.mode == "gaps":  # baseline: the gap ratio alone
+        if ratio is None:
+            return result("ambiguous", "none", "gaps baseline: no gap ratio")
+        if strong_gap:
+            return result("split", "gap", "gaps baseline: ratio at or above threshold")
+        return result("keep", "none", "gaps baseline: ratio below threshold")
+    if config.mode == "container":  # baseline: structure and paint alone, no gap evidence
+        if ev.foreground_spans and independent:
+            return result("ambiguous", "none", "container baseline: transition conflicts with spanning content")
+        if repeated and not paint_change:
+            return result("keep", "none", "container baseline: repeated collection")
+        if paint_change:
+            return result("split", "visual", "container baseline: page-wide background change")
+        if landmark_transition or siblings:
+            return result("split", "structural", "container baseline: landmark or boxed sibling transition")
+        return result("keep", "none", "container baseline: generic wrappers")
+
     if ev.foreground_spans and (strong_gap or independent):
         return result("ambiguous", "none", "5: split evidence conflicts with content spanning the line")
     if repeated and not paint_change:

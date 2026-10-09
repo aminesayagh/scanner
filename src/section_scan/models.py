@@ -262,6 +262,8 @@ class DetectorConfig(BaseModel):
     gap_ratio_threshold: float = Field(3.0, gt=0, allow_inf_nan=False)
     fallback_spacing_floor: float = Field(16.0, gt=0, allow_inf_nan=False)  # CSS px, when no line height is measurable
     min_spacing_observations: int = Field(2, ge=1)  # internal gaps needed before a side's spacing counts
+    # Evaluation baselines: "container" decides on structure and paint only, "gaps" on the gap ratio only.
+    mode: Literal["combined", "container", "gaps"] = "combined"
 
 
 class SpacingEstimate(BaseModel):
