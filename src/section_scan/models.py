@@ -358,3 +358,38 @@ class ReviewState(BaseModel):
         if len(members) != len(set(members)):
             raise ValueError("an element belongs to more than one region")
         return self
+
+
+class ExportRegion(BaseModel):
+    id: str
+    order: int = Field(ge=0)
+    label: str
+    role: Literal["header", "footer", "flow", "overlay"]
+    status: Literal["confirmed", "proposed"]  # "proposed" only ever appears in a draft export
+    bounds: Rect  # CSS px, document space
+    element_ids: list[str]  # snapshot-specific source references (valid for this capture only)
+    source_section_ids: list[str]
+    overlaps: list[tuple[str, Literal["overlay", "header_over_content", "content"]]]
+
+
+class ExportDocument(BaseModel):
+    schema_version: int = SCHEMA_VERSION
+    kind: Literal["sections", "draft-sections"]  # a draft is never mistaken for a confirmed list
+    capture_id: str
+    page_url: str
+    final_url: str | None
+    viewport: Viewport
+    device_scale_factor: float
+    detector_version: str
+    proposal_revision: str
+    review_revision: int | None  # None: draft straight from the automatic proposals
+    regions: list[ExportRegion]
+
+    @model_validator(mode="after")
+    def _check(self) -> "ExportDocument":
+        if self.kind == "sections" and any(r.status != "confirmed" for r in self.regions):
+            raise ValueError("a normal export may only contain confirmed regions")
+        ids = [r.id for r in self.regions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate region IDs")
+        return self

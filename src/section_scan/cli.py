@@ -15,6 +15,7 @@ from rich.tree import Tree
 from .capture import capture as run_capture
 from .candidates import generate
 from .detector import detect as detect_sections
+from . import export as export_mod
 from . import review as review_mod
 from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from .normalize import normalize
@@ -378,3 +379,22 @@ def _review_inspect(run: Path, state, rid: str) -> None:
                 for label, xs in (("for", b.supporting), ("against", b.opposing), ("unknown", b.unknowns)):
                     for x in xs:
                         console.print(f"    {label}: {escape_markup(x)}")
+
+
+@app.command()
+def export(
+    run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory with a review."),
+    output: Path = typer.Option(..., "--output", "-o", help="Where to write the JSON."),
+    draft: bool = typer.Option(False, "--draft", help="Include unconfirmed regions, each with its status."),
+) -> None:
+    """Export the confirmed sections as JSON (a --draft may include unconfirmed ones, marked as such)."""
+    if not (run / "proposals.json").exists():
+        console.print(f"[red]Error:[/] {run} has no proposals.json; run `section-scan detect {run}` first.")
+        raise typer.Exit(2)
+    try:
+        doc = export_mod.build(run, draft)
+    except export_mod.ExportError as e:
+        console.print(f"[red]Not exported:[/] {escape_markup(str(e))}")
+        raise typer.Exit(1)
+    output.write_text(doc.model_dump_json(indent=2))
+    console.print(f"Exported {len(doc.regions)} regions ({doc.kind}) → {output}")

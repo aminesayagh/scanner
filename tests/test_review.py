@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from section_scan.capture import capture
 from section_scan.cli import app
-from section_scan.models import ElementSnapshot, ReviewState
+from section_scan.models import ElementSnapshot, ExportDocument, ReviewState
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -230,3 +230,47 @@ def test_stale_review_is_not_drawn_over_new_proposals(run):
 def test_interactive_unmatched_quote_does_not_end_the_session(run):
     result = cli("review", run, input="rename s1 Bob's\nrename s1 Intro\nfinish\n")
     assert result.exit_code == 0 and "Not applied" in result.output and "Saved revision 1" in result.output
+
+
+def test_normal_export_requires_every_retained_region_confirmed(run, tmp_path):
+    out = tmp_path / "sections.json"
+    cli("review", run, "list")
+    result = cli("export", run, "-o", out)
+    assert result.exit_code == 1 and "still need review" in result.output and not out.exists()
+
+    overlay = next(r for r in state(run).regions if r.role == "overlay")
+    cli("review", run, "exclude", overlay.id)
+    cli("review", run, "report")
+    cli("review", run, "confirm", "all")
+    assert cli("export", run, "-o", out).exit_code == 0
+    doc = ExportDocument.model_validate_json(out.read_text())  # validates against the model
+    assert doc.kind == "sections" and all(r.status == "confirmed" for r in doc.regions)
+    assert overlay.id not in [r.id for r in doc.regions]  # excluded regions are not exported
+    assert doc.review_revision == state(run).revision and doc.page_url.startswith("file://")
+    assert any(k == "header_over_content" for r in doc.regions for _, k in r.overlaps)
+    assert [r.order for r in doc.regions] == list(range(len(doc.regions)))
+
+
+def test_draft_export_keeps_statuses_distinct(run, tmp_path):
+    out = tmp_path / "draft.json"
+    assert cli("export", run, "-o", out).exit_code == 1  # nothing reviewed: no normal export
+    assert cli("export", run, "-o", out, "--draft").exit_code == 0
+    doc = ExportDocument.model_validate_json(out.read_text())
+    assert doc.kind == "draft-sections" and doc.review_revision is None
+    assert {r.status for r in doc.regions} == {"proposed"}
+    cli("review", run, "list")
+    cli("review", run, "confirm", flow_ids(run)[0])
+    assert cli("export", run, "-o", out, "--draft").exit_code == 0
+    doc = ExportDocument.model_validate_json(out.read_text())
+    assert {r.status for r in doc.regions} == {"proposed", "confirmed"}
+    with pytest.raises(ValueError):  # a document claiming to be confirmed cannot carry proposed regions
+        ExportDocument.model_validate({**doc.model_dump(), "kind": "sections"})
+
+
+def test_export_refuses_a_stale_review(run, tmp_path):
+    cli("review", run, "list")
+    props = json.loads((run / "proposals.json").read_text())
+    props["notes"].append("rerun")
+    (run / "proposals.json").write_text(json.dumps(props))
+    result = cli("export", run, "-o", tmp_path / "x.json", "--draft")
+    assert result.exit_code == 1 and "predates" in result.output
