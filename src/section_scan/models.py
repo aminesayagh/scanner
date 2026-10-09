@@ -460,8 +460,9 @@ class MessageItem(BaseModel):
 
     _eid: str | None = PrivateAttr(None)  # source element (not exported): matches content across breakpoints
 
-    # "text": any other text; "img": an image's alt text (decorative images, alt="", are left out)
-    tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "text", "img"]
+    # "a": a link's text; "img": an image's alt text (decorative images, alt="", are left out);
+    # "text": any other text
+    tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "a", "text", "img"]
     text: str
     hidden: list[str] = []  # breakpoints where this content is not shown (multi-breakpoint reports only)
 

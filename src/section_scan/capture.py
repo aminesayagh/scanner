@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from .models import Browser, ElementSnapshot, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
 
 # Bump when browser_extract.js changes what it measures, so old element files stay identifiable.
-EXTRACTOR_VERSION = "6"
+EXTRACTOR_VERSION = "7"
 _EXTRACT = (Path(__file__).parent / "browser_extract.js").read_text()
 
 

@@ -409,16 +409,16 @@ def test_report_json_content_follows_dom_branches_one_level_deep(tmp_path):
     header = next(s for s in sections if s["role"] == "header")["message"]
     assert header == [
         {"tag": "p", "text": "11:26 PM, Morocco"},
-        {"tag": "group", "children": [{"tag": "text", "text": "Home"}, {"tag": "text", "text": "/"},
-                                      {"tag": "text", "text": "Projects"}]},
-        {"tag": "group", "children": [{"tag": "text", "text": "About us"}, {"tag": "text", "text": "Get in touch"}]},
+        {"tag": "group", "children": [{"tag": "a", "text": "Home"}, {"tag": "text", "text": "/"},
+                                      {"tag": "a", "text": "Projects"}]},
+        {"tag": "group", "children": [{"tag": "a", "text": "About us"}, {"tag": "a", "text": "Get in touch"}]},
     ]
     plans = next(s for s in sections if "Plans" in json.dumps(s["message"]))
     assert plans["message"] == [
         {"tag": "group", "children": [{"tag": "h2", "text": "Plans"}, {"tag": "p", "text": "Pick one"}]},
         {"tag": "ul", "children": [{"tag": "li", "text": "Starter"}, {"tag": "li", "text": "Pro"},
                                    {"tag": "li", "text": "Nested"}]},
-        {"tag": "p", "text": "Start free"},
+        {"tag": "a", "text": "Start free"},
     ]
     # One level only: no group ever holds another group.
     for s in sections:
@@ -481,3 +481,26 @@ def test_report_json_includes_image_alt_text_as_content(tmp_path):
         {"tag": "li", "text": "Plain"},
     ]}
     assert len(message) == 3  # decorative (alt="") and alt-less images add nothing
+
+
+
+def test_report_json_links_are_a_entries_and_carousel_slides_count(tmp_path):
+    page = tmp_path / "links.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Links</title></head>
+      <body style="margin: 0; overflow-x: hidden"><section style="padding: 40px">
+        <h2>Let us talk</h2>
+        <a href="#contact" class="button"><span>Let's</span> <span>talk</span></a>
+        <a href="#case"><h3>Case study</h3><p>Read how</p></a>
+        <div style="overflow: hidden; width: 600px"><div style="display: flex; transform: translateX(-1200px)">
+          <p style="flex: none; width: 600px">Slide one</p><p style="flex: none; width: 600px">Slide two</p>
+          <p style="flex: none; width: 600px">Slide three</p></div></div>
+      </section>
+      <section style="padding: 40px; background: rgb(30, 30, 60); color: white"><h2>Next</h2></section>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    text = json.dumps(json.loads((out / "report.json").read_text())["sections"][0]["message"])
+    assert '{"tag": "a", "text": "Let\'s talk"}' in text  # one entry for the whole button label
+    assert '{"tag": "h3", "text": "Case study"}' in text  # a card link stays a container of its parts
+    assert all(f"Slide {n}" in text for n in ("one", "two", "three"))  # slides outside the page area count

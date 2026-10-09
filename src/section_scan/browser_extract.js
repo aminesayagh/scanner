@@ -218,7 +218,8 @@
       alt: tag === 'img' ? el.getAttribute('alt') : null,
       path: pathOf(el),
       text: LEAF.has(tag) ? '' : ownText(el),
-      full_text: LEAF.has(tag) ? '' : TEXT_BLOCKS.has(tag) ? blockText(el) : ownFullText(el),
+      // Links are read whole too: a button-like <a> often wraps its label in spans.
+      full_text: LEAF.has(tag) ? '' : TEXT_BLOCKS.has(tag) || tag === 'a' ? blockText(el) : ownFullText(el),
       box: contents ? 'contents' : 'normal',
       bounds,
       viewport_bounds: vr,

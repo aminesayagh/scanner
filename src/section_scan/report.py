@@ -176,11 +176,12 @@ def _descendants(eid, by_id, skip_lists: bool = False):
 
 
 def _in_message(e) -> bool:
-    """DOM content counts even when not painted right now (closed <details>, waiting for an animation);
-    text meant only for screen readers (1x1, pushed offscreen, clipped away) does not.
+    """DOM content counts even when not painted right now (closed <details>, waiting for an animation,
+    a carousel slide or off-canvas menu outside the page area); text meant only for screen readers
+    (1x1 boxes, clipped to nothing) does not.
     """
     v = e.visibility
-    return not (v.tiny or v.offscreen or v.clipped == "hidden" or v.clipped_ancestor)
+    return not (v.tiny or v.clipped == "hidden" or v.clipped_ancestor)
 
 
 def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem | MessageListItem]:
@@ -192,6 +193,14 @@ def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem | MessageLi
     for eid in sorted(ids, key=_order):
         e = by_id[eid]
         if eid in used or not _in_message(e):
+            continue
+        if e.tag == "a" and not any(by_id[d].tag in TEXT_BLOCKS for d in _descendants(eid, by_id)):
+            # A link with inline content only (a button, a nav link): one "a" entry with its whole label.
+            # A link wrapping headings or paragraphs (a card) is a container; an image-only link leaves
+            # its image to be listed by alt text.
+            if text := _text_of(e):
+                used.update(_descendants(eid, by_id))
+                items.append(_item("a", text, eid))
             continue
         if e.tag in TEXT_BLOCKS:
             inside = set(_descendants(eid, by_id, skip_lists=e.tag == "li"))
