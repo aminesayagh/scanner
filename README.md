@@ -64,10 +64,10 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
 
 **Matching content across loads:**
 
-1. **Same DOM slot** (a path such as `#work>ul>li[3]>h3`): same content, even with different text. This is
-   what keeps random content (a rotating testimonial) from being listed once per breakpoint.
-2. **Same tag and text in another slot** (a desktop nav link and the same link in the mobile menu): same
-   content.
+1. **Same tag and text:** the same content, wherever it sits. This covers a desktop nav link and the
+   same link in the mobile menu, or an image in a gallery that reshuffles and re-rows itself per width.
+2. **Same DOM slot** (a path such as `#work>ul>li[3]>h3`): the same content, even with different text.
+   This is what keeps random content (a rotating testimonial) from being listed once per breakpoint.
 3. **Otherwise:** the content exists only at those breakpoints.
 
 **Limitations:**

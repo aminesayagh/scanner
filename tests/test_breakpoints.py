@@ -99,3 +99,10 @@ def test_phone_user_agent_content_is_captured(site):
     _, doc = site
     intro = {i["text"]: i for i in items(by_id(doc, "intro"))}
     assert intro["Open in the app"]["hidden"] == ["laptop", "tablet"]  # served only to the emulated iPhone
+
+
+def test_shuffled_gallery_rebuilt_per_width_lists_each_image_once(site):
+    _, doc = site
+    shots = [i for i in items(by_id(doc, "shots")) if i["tag"] == "img"]
+    assert sorted(i["text"] for i in shots) == [f"Shot {n}" for n in range(1, 7)]
+    assert not any("hidden" in i for i in shots)

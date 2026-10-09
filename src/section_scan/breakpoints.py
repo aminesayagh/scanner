@@ -3,11 +3,11 @@
 Each breakpoint is a separate page load, as a real device would load it, stored as a normal run directory
 (`<site>/laptop`, `<site>/tablet`, `<site>/mobile`), so every other command works on it unchanged.
 
-Separate loads can show different random content (a shuffled testimonial, a rotating hero). Content is
-therefore matched across loads by its DOM slot first (`Element.path`): the same slot is the same content
-even when its text differs, so random content is listed once instead of once per breakpoint. Only content
-in no shared slot is matched by tag and text (e.g. a desktop nav and a mobile menu with the same links).
-Whatever is left exists only at some breakpoints, and is marked hidden at the others.
+Separate loads can show different random content (a rotating testimonial, a shuffled gallery). Content
+is matched across loads by tag and text first (the same link in a desktop nav and a mobile menu, the same
+image in a gallery reshuffled per load), then by DOM slot (`Element.path`): content in the same slot is
+the same content even when its text differs, so random content is listed once instead of once per
+breakpoint. Whatever is left exists only at some breakpoints, and is marked hidden at the others.
 """
 
 from dataclasses import dataclass, field
@@ -108,30 +108,34 @@ def merge(runs: dict[str, Path]) -> SiteReportDocument:
     units: dict[tuple[str, str], _Unit] = {}  # (breakpoint, element id) -> unit
     all_units: list[_Unit] = []
 
-    # 1. Content identity across loads: same DOM slot, then same tag and text, else new.
+    # 1. Content identity across loads: same tag and text, then same DOM slot, else new. Text first, so a
+    # gallery that shuffles its items and rebuilds its rows per width still pairs each item with itself;
+    # content whose text changes per load (a rotating quote) finds no text match and pairs by slot.
+    path_of = {}
     for run in loaded:
         leaves = [leaf for sid in run.messages for leaf in _leaves(run.messages[sid])]
-        by_path = {}
-        for u in all_units:
-            for bp, eid in u.present.items():
-                p = next(r for r in loaded if r.bp == bp).by_id[eid].path
-                if p:
-                    by_path.setdefault(p, u)
-        matched = []
+        pending = []
         for tag, text, eid in leaves:
-            path = run.by_id[eid].path
-            u = by_path.get(path) if path else None
-            if u is not None and run.bp not in u.present:
-                u.present[run.bp] = eid
-                matched.append(eid)
-        for tag, text, eid in leaves:
-            if eid in matched:
-                continue
             u = next((x for x in all_units if run.bp not in x.present and x.tag == tag and x.text == text), None)
             if u is None:
+                pending.append((tag, text, eid))
+            else:
+                u.present[run.bp] = eid
+        by_path = {}
+        for u in all_units:
+            if run.bp not in u.present:
+                for p in (path_of.get((bp, eid)) for bp, eid in u.present.items()):
+                    if p:
+                        by_path.setdefault(p, u)
+        for tag, text, eid in pending:
+            path = run.by_id[eid].path
+            u = by_path.pop(path, None) if path else None
+            if u is None or run.bp in u.present:
                 u = _Unit(tag=tag, text=text)
                 all_units.append(u)
             u.present[run.bp] = eid
+        for tag, text, eid in leaves:
+            path_of[(run.bp, eid)] = run.by_id[eid].path
         for u in all_units:
             if run.bp in u.present:
                 units[(run.bp, u.present[run.bp])] = u

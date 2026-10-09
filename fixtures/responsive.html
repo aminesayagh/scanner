@@ -22,6 +22,7 @@
   <section id="gallery" class="desktop-only" style="background: rgb(230, 255, 230)"><h2>Gallery</h2><p>Big images</p></section>
   <section id="app" class="mobile-only" style="background: rgb(230, 230, 255)"><h2>Get the app</h2><p>Mobile download</p></section>
   <section id="band" style="height: 160px; background: rgb(40, 40, 40)"></section>
+  <section id="shots" style="background: rgb(245, 245, 245)"><h2>Shots</h2><div id="grid"></div></section>
   <section id="contact" style="background: rgb(255, 255, 220)"><h2>Contact</h2><p>Write to us</p></section>
 </main>
 <footer style="padding: 40px"><p>Footer text</p></footer>
@@ -29,6 +30,15 @@
   // Content served by user agent, as sites detecting phones do (not by screen width).
   if (/iPhone/.test(navigator.userAgent)) {
     document.getElementById('intro').insertAdjacentHTML('beforeend', '<p>Open in the app</p>');
+  }
+  // A gallery that shuffles its images on every load and builds rows by screen width (3 or 2 per row).
+  const svg = 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='60' height='40'/>");
+  const shots = [1, 2, 3, 4, 5, 6].sort(() => Math.random() - 0.5);
+  const perRow = innerWidth > 500 ? 3 : 2;
+  for (let i = 0; i < shots.length; i += perRow) {
+    const row = document.createElement('div');
+    row.innerHTML = shots.slice(i, i + perRow).map((n) => `<img src="${svg}" width="60" height="40" alt="Shot ${n}">`).join('');
+    document.getElementById('grid').append(row);
   }
   // A different quote on every load, as testimonial carousels often do.
   document.getElementById('quote').textContent =
