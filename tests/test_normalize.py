@@ -106,3 +106,58 @@ def test_detect_writes_groups_and_overlay_draws_them(wrapped):
     result = CliRunner().invoke(app, ["overlay", str(out), "--group", groups.groups[1].id])
     assert result.exit_code == 0, result.output
     assert f"top:{groups.groups[1].bounds.y}px" in (out / "overlay.html").read_text()
+
+
+@pytest.fixture(scope="module")
+def edge(tmp_path_factory):
+    return load(tmp_path_factory, "normalize-edge")
+
+
+def test_inline_block_cards_stay_separate_cards(edge):
+    _, elements, groups = edge
+    by_id = {g.id: g for g in groups.groups}
+    cards = [by_id[group_with_text(elements, groups, f"Inline {n}").parent_id] for n in ("one", "two", "three")]
+    assert all(c.kind == "container" for c in cards)
+    row = by_id[cards[0].parent_id]
+    assert row.child_ids == [c.id for c in cards] and row.evidence.repeated_children
+
+
+def test_link_wrapped_cards_are_not_one_text_run(edge):
+    _, elements, groups = edge
+    one, two = (group_with_text(elements, groups, f"Linked {n}") for n in ("one", "two"))
+    assert one.id != two.id and one.kind == two.kind == "content"
+
+
+def test_text_beside_an_omitted_child_is_kept(edge):
+    _, elements, groups = edge
+    price = group_with_text(elements, groups, "Price $49")
+    assert price.kind == "content"
+    assert not any(o.element_id == price.primary_element_id for o in groups.omitted)
+
+
+def test_absolute_wrapper_keeps_out_of_flow_positioning(edge):
+    _, elements, groups = edge
+    by_id = {g.id: g for g in groups.groups}
+    bar = by_id[group_with_text(elements, groups, "Floating bar").parent_id]
+    wrapper = by_id[bar.parent_id]
+    assert wrapper.positioning == "absolute" and "positioned absolute" in wrapper.reasons
+
+
+def test_semi_transparent_background_is_complex(edge):
+    _, elements, groups = edge
+    assert group_with_text(elements, groups, "Tinted text").evidence.background.context == "complex"
+
+
+def test_stacked_full_width_sections_are_not_repeated_cards(edge):
+    _, elements, groups = edge
+    by_id = {g.id: g for g in groups.groups}
+    stack = by_id[by_id[group_with_text(elements, groups, "Stacked one").parent_id].parent_id]
+    assert len(stack.child_ids) == 3 and not stack.evidence.repeated_children
+
+
+def test_meaningful_page_wrapper_is_not_replaced_by_body(tmp_path_factory):
+    _, elements, groups = load(tmp_path_factory, "normalize-root")
+    root = groups.groups[0]
+    tags = {e.id: e.tag for e in elements.elements}
+    assert tags[root.primary_element_id] == "div"
+    assert root.evidence.padding and root.evidence.background.own == "rgb(250, 240, 230)"

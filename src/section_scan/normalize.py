@@ -49,12 +49,15 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
     def has_content(e: Element) -> bool:
         return bool(e.text) or e.tag in MEDIA_TAGS or any(has_content(by_id[c]) for c in e.child_ids)
 
+    def inline_only(e: Element) -> bool:
+        # inline-block/flex/grid lay out their own boxes (e.g. cards), so they do not count as inline text.
+        return e.styles.get("display") == "inline" and all(inline_only(by_id[c]) for c in e.child_ids)
+
     def is_content_block(e: Element) -> bool:
         if e.tag in CONTENT_TAGS:
             return True
         # Text with only inline children, e.g. <div>Read <a>more</a></div>: one run of content.
-        inline = all(by_id[c].styles.get("display", "").startswith("inline") for c in e.child_ids)
-        return inline and has_content(e)
+        return all(inline_only(by_id[c]) for c in e.child_ids) and has_content(e)
 
     def build(e: Element) -> list[_Group]:
         if e.visibility.visible and is_content_block(e):
@@ -68,6 +71,9 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
             return child_groups
 
         if not child_groups:
+            if e.text:
+                # Children were already omitted with their own reasons, so the group claims only `e`.
+                return [_Group("content", e, [e.id], reasons=[f"own text <{e.tag}>; children add no group"])]
             if _paints(e):
                 return [_Group("decorative", e, [e.id], reasons=["paints a box with no content"])]
             omitted.append(Omitted(element_id=e.id, reason="empty_box"))
@@ -78,8 +84,9 @@ def normalize(snapshot: ElementSnapshot) -> GroupSnapshot:
             if not keep:
                 only = child_groups[0]
                 only.element_ids.append(e.id)
-                if e.parent_id is None:
-                    # The page root keeps its identity, so the root group is <body> however deep the wrappers go.
+                if e.parent_id is None and not _reasons_to_keep(only.primary, None):
+                    # The page root keeps its identity, so the root group is <body> however deep redundant
+                    # wrappers go. A meaningful only-child (padding, paint, landmark) stays the root instead.
                     only.reasons.append(f"page root absorbed redundant wrapper {only.primary.id} <{only.primary.tag}>")
                     only.primary = e
                 else:
@@ -135,7 +142,10 @@ def _own_background(e: Element) -> str:
     if e.styles.get("backgroundImage", "none") != "none":
         return "complex"
     color = e.styles.get("backgroundColor", "transparent")
-    return "transparent" if _alpha(color) == 0 else color
+    alpha = _alpha(color)
+    if alpha == 0:
+        return "transparent"
+    return color if alpha == 1 else "complex"  # semi-transparent: blends with whatever is behind it
 
 
 def _border(e: Element) -> bool:
@@ -179,7 +189,7 @@ def _reasons_to_keep(e: Element, only_child: Element | None) -> list[str]:
         reasons.append("has a border")
     if _padding(e):
         reasons.append("has padding")
-    if e.styles.get("position") in ("fixed", "sticky"):
+    if e.styles.get("position") in ("fixed", "sticky", "absolute"):
         reasons.append(f"positioned {e.styles['position']}")
     if "scroll_container" in e.limitations:
         reasons.append("scroll container")
@@ -204,6 +214,7 @@ def _evidence(g: _Group, by_id: dict[str, Element]) -> GroupEvidence:
         and len(containers) == len(g.children)
         and len({c.tag for c in containers}) == 1
         and max(c.bounds.width for c in containers) - min(c.bounds.width for c in containers) <= GEOMETRY_TOLERANCE
+        and len({round(c.bounds.x) for c in containers}) >= 2
     )
     return GroupEvidence(
         landmark=_landmark(e),

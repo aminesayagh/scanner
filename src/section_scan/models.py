@@ -145,7 +145,7 @@ class GroupEvidence(BaseModel):
     padding: bool
     border: bool
     background: Background
-    repeated_children: bool  # 2+ child containers with the same tag and width, e.g. a card row
+    repeated_children: bool  # 2+ same-tag, same-width child containers, not all in one column (cards)
 
 
 class VisualGroup(BaseModel):
@@ -178,6 +178,9 @@ class GroupSnapshot(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> "GroupSnapshot":
         _check_tree(self.groups)
+        for g in self.groups:
+            if g.primary_element_id not in g.element_ids:
+                raise ValueError(f"{g.id}: primary element {g.primary_element_id} is not among its members")
         members = [i for g in self.groups for i in g.element_ids] + [o.element_id for o in self.omitted]
         if len(members) != len(set(members)):
             raise ValueError("an element is assigned more than once")

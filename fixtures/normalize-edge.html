@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Normalize edge cases</title>
+<style>
+  * { margin: 0; }
+  body { font: 16px sans-serif; position: relative; }
+  .card { width: 200px; padding: 12px; border: 1px solid rgb(200, 200, 200); }
+  #inline-cards .card { display: inline-block; vertical-align: top; }
+  #linked a { display: inline; }
+  .price-box { padding: 20px; }
+  .ripple { position: absolute; width: 10px; height: 10px; }
+  #abswrap { position: absolute; top: 0; right: 0; }
+  #abswrap .bar { padding: 8px; background: rgb(250, 250, 200); }
+  #tint { background: rgba(0, 0, 0, 0.5); }
+  #stack section { padding: 10px; }
+</style></head>
+<body>
+<section id="inline-cards">
+  <div class="card"><h3>Inline one</h3><p>First</p></div><div class="card"><h3>Inline two</h3><p>Second</p></div><div class="card"><h3>Inline three</h3><p>Third</p></div>
+</section>
+<section id="linked">
+  <a href="#"><article class="card"><h3>Linked one</h3></article></a>
+  <a href="#"><article class="card"><h3>Linked two</h3></article></a>
+</section>
+<div class="price-box"><div>Price $49<span class="ripple"></span></div></div>
+<div id="abswrap"><div class="bar"><p>Floating bar</p></div></div>
+<div id="tint"><p>Tinted text</p></div>
+<div id="stack">
+  <section><p>Stacked one</p></section>
+  <section><p>Stacked two</p></section>
+  <section><p>Stacked three</p></section>
+</div>
+</body></html>
