@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Normalize wrapped</title>
+<style>
+  * { margin: 0; }
+  body { font: 16px sans-serif; }
+  header { padding: 16px 32px; background: rgb(17, 102, 204); }
+  #hero { padding: 48px 32px; }
+  .panel { padding: 40px; background: rgb(240, 240, 250); }
+  #features { padding: 48px 32px; background: linear-gradient(rgb(255, 255, 255), rgb(230, 240, 255)); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .card { border: 1px solid rgb(200, 200, 200); padding: 16px; }
+  footer { padding: 24px 32px; }
+</style></head>
+<body>
+<!-- Same rendering as normalize-base.html, buried in wrappers that add nothing visual. -->
+<div><div><div>
+<header><div><nav><a href="#">Home</a> <a href="#">Pricing</a></nav></div></header>
+<div><section id="hero">
+  <div><div class="panel"><div><div class="inner"><div><h1>Hero title</h1></div><p>Hero text</p></div></div></div></div>
+</section></div>
+<div style="display: contents"><section id="features">
+  <div style="display: contents"><div><h2>Features</h2></div>
+  <div><div><div class="grid">
+    <div><div class="card"><h3>One</h3><p>First card</p></div></div>
+    <div class="card"><div><h3>Two</h3></div><p>Second card</p></div>
+    <div class="card"><h3>Three</h3><div><div><p>Third card</p></div></div></div>
+  </div></div></div></div>
+  <div class="more">Read <a href="#">more</a></div>
+</section></div>
+<footer><div><p>Footer text</p></div></footer>
+</div></div></div>
+</body></html>

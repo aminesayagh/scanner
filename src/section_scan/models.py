@@ -116,13 +116,69 @@ class ElementSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def _check_references(self) -> "ElementSnapshot":
-        by_id = {e.id: e for e in self.elements}
-        if len(by_id) != len(self.elements):
-            raise ValueError("duplicate element IDs")
-        for e in self.elements:
-            if e.parent_id is not None and e.id not in by_id.get(e.parent_id, e).child_ids:
-                raise ValueError(f"{e.id}: parent {e.parent_id} missing or does not list it as a child")
-            for c in e.child_ids:
-                if c not in by_id or by_id[c].parent_id != e.id:
-                    raise ValueError(f"{e.id}: child {c} missing or has another parent")
+        _check_tree(self.elements)
+        return self
+
+
+def _check_tree(nodes: list) -> None:
+    """Unique IDs, and parent/child references that agree in both directions."""
+    by_id = {n.id: n for n in nodes}
+    if len(by_id) != len(nodes):
+        raise ValueError("duplicate IDs")
+    for n in nodes:
+        if n.parent_id is not None and n.id not in by_id.get(n.parent_id, n).child_ids:
+            raise ValueError(f"{n.id}: parent {n.parent_id} missing or does not list it as a child")
+        for c in n.child_ids:
+            if c not in by_id or by_id[c].parent_id != n.id:
+                raise ValueError(f"{n.id}: child {c} missing or has another parent")
+
+
+class Background(BaseModel):
+    own: str  # "transparent", a CSS colour, or "complex" (image/gradient: no single colour)
+    context_element_id: str | None  # nearest painting ancestor element; None means the page canvas
+    context: str | None  # that ancestor's colour, or "complex"
+
+
+class GroupEvidence(BaseModel):
+    landmark: str | None  # role attribute or landmark tag
+    display: str
+    padding: bool
+    border: bool
+    background: Background
+    repeated_children: bool  # 2+ child containers with the same tag and width, e.g. a card row
+
+
+class VisualGroup(BaseModel):
+    """An inferred grouping, not a claim that the page has exactly this HTML container."""
+
+    id: str
+    parent_id: str | None
+    child_ids: list[str]
+    kind: Literal["container", "content", "decorative"]
+    primary_element_id: str  # the element whose box defines the group
+    element_ids: list[str]  # every source element this group stands for
+    bounds: Rect
+    positioning: Literal["flow", "absolute", "sticky", "fixed"]
+    evidence: GroupEvidence
+    reasons: list[str]  # why this group was kept, and which wrappers it absorbed
+
+
+class Omitted(BaseModel):
+    element_id: str
+    reason: Literal["not_visible", "pass_through", "empty_box"]
+
+
+class GroupSnapshot(BaseModel):
+    schema_version: int = SCHEMA_VERSION
+    capture_id: str
+    normalizer_version: str
+    groups: list[VisualGroup]
+    omitted: list[Omitted]
+
+    @model_validator(mode="after")
+    def _check(self) -> "GroupSnapshot":
+        _check_tree(self.groups)
+        members = [i for g in self.groups for i in g.element_ids] + [o.element_id for o in self.omitted]
+        if len(members) != len(set(members)):
+            raise ValueError("an element is assigned more than once")
         return self

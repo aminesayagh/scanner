@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Normalize base</title>
+<style>
+  * { margin: 0; }
+  body { font: 16px sans-serif; }
+  header { padding: 16px 32px; background: rgb(17, 102, 204); }
+  #hero { padding: 48px 32px; }
+  .panel { padding: 40px; background: rgb(240, 240, 250); }
+  #features { padding: 48px 32px; background: linear-gradient(rgb(255, 255, 255), rgb(230, 240, 255)); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .card { border: 1px solid rgb(200, 200, 200); padding: 16px; }
+  footer { padding: 24px 32px; }
+</style></head>
+<body>
+<header><nav><a href="#">Home</a> <a href="#">Pricing</a></nav></header>
+<section id="hero">
+  <div class="panel"><div class="inner"><h1>Hero title</h1><p>Hero text</p></div></div>
+</section>
+<section id="features">
+  <h2>Features</h2>
+  <div class="grid">
+    <div class="card"><h3>One</h3><p>First card</p></div>
+    <div class="card"><h3>Two</h3><p>Second card</p></div>
+    <div class="card"><h3>Three</h3><p>Third card</p></div>
+  </div>
+  <div class="more">Read <a href="#">more</a></div>
+</section>
+<footer><p>Footer text</p></footer>
+</body></html>

@@ -4,8 +4,11 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.tree import Tree
 
 from .capture import capture as run_capture
+from .models import ElementSnapshot
+from .normalize import normalize
 from .overlay import write_overlay
 
 app = typer.Typer(help="Capture a webpage, propose its major sections, review them, and export JSON.")
@@ -75,14 +78,55 @@ def capture(
 def overlay(
     run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory from `capture`."),
     ids: list[str] = typer.Option([], "--id", help="Element ID to draw (repeatable). Default: the body's children."),
+    group_ids: list[str] = typer.Option([], "--group", help="Visual group ID to draw instead (repeatable)."),
 ) -> None:
-    """Draw element boxes over the screenshot to check that captured geometry lines up."""
+    """Draw element or group boxes over the screenshot to check that geometry lines up."""
     if not (run / "elements.json").exists():
         console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
         raise typer.Exit(2)
+    if group_ids and not (run / "groups.json").exists():
+        console.print(f"[red]Error:[/] {run} has no groups.json; run `section-scan detect {run}` first.")
+        raise typer.Exit(2)
     try:
-        path = write_overlay(run, ids)
+        path = write_overlay(run, ids, group_ids)
     except ValueError as e:
         console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(2)
     console.print(f"Overlay written → {path}")
+
+
+@app.command()
+def detect(
+    run: Path = typer.Argument(..., exists=True, file_okay=False, help="Run directory from `capture`."),
+    depth: int = typer.Option(3, min=0, help="Group tree depth to print."),
+) -> None:
+    """Analyse saved capture evidence (no site visit). Currently: simplify elements into visual groups."""
+    if not (run / "elements.json").exists():
+        console.print(f"[red]Error:[/] {run} has no elements.json; was the capture successful?")
+        raise typer.Exit(2)
+    snapshot = ElementSnapshot.model_validate_json((run / "elements.json").read_text())
+    groups = normalize(snapshot)
+    (run / "groups.json").write_text(groups.model_dump_json(indent=1))
+
+    by_id = {g.id: g for g in groups.groups}
+    tags = {e.id: e.tag for e in snapshot.elements}
+    tree = Tree(f"[bold]{run}[/] — {len(groups.groups)} groups from {len(snapshot.elements)} elements")
+
+    def add(node: Tree, gid: str, level: int) -> None:
+        g = by_id[gid]
+        b = g.bounds
+        label = f"{g.id} {g.kind} <{tags[g.primary_element_id]}> y={b.y:.0f} h={b.height:.0f} w={b.width:.0f}"
+        if g.positioning != "flow":
+            label += f" [blue]{g.positioning}[/]"
+        child = node.add(label)
+        if level < depth:
+            for c in g.child_ids:
+                add(child, c, level + 1)
+        elif g.child_ids:
+            child.add(f"[dim]… {len(g.child_ids)} more[/]")
+
+    for g in groups.groups:
+        if g.parent_id is None:
+            add(tree, g.id, 0)
+    console.print(tree)
+    console.print(f"Groups written → {run / 'groups.json'}")
