@@ -67,11 +67,11 @@ def capture(
     wait_for_operator: Callable[[], None] | None = None,
     limits: Limits = Limits(),
 ) -> Manifest:
-    """Capture one URL into out_dir. Always writes manifest.json, including on failure."""
+    """Capture one URL into out_dir. Browser failures and cancellations are recorded in manifest.json."""
     if (out_dir / "manifest.json").exists():
         raise FileExistsError(f"{out_dir} already holds a capture; captures are immutable, choose a new --output")
-    out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Built before mkdir so invalid inputs (e.g. a non-finite scale) fail without leaving a directory.
     manifest = Manifest(
         capture_id=uuid.uuid4().hex,
         status="failed",
@@ -81,6 +81,7 @@ def capture(
         device_scale_factor=scale,
         readiness=Readiness(manual=wait_for_operator is not None),
     )
+    out_dir.mkdir(parents=True, exist_ok=True)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=not headed)
@@ -92,22 +93,33 @@ def capture(
     except PlaywrightError as e:
         manifest.status = "failed"
         manifest.error = str(e)
+    except (EOFError, KeyboardInterrupt):
+        manifest.status = "failed"
+        manifest.error = "Capture cancelled by the operator"
 
     (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     return manifest
 
 
 def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits: Limits) -> None:
-    response = page.goto(url, wait_until="domcontentloaded", timeout=limits.nav_timeout_s * 1000)
-    manifest.final_url = page.url
-    if response is not None:
-        manifest.http_status = response.status
-        if response.status >= 400:
-            manifest.error = f"HTTP {response.status} from {page.url}"
-            return
+    # Track the latest main-frame document response: the operator may navigate (login, challenge) before capture.
+    def on_response(response) -> None:
+        if response.request.is_navigation_request() and response.frame == page.main_frame:
+            manifest.http_status = response.status
 
+    page.on("response", on_response)
+    page.goto(url, wait_until="domcontentloaded", timeout=limits.nav_timeout_s * 1000)
+    manifest.final_url = page.url
+
+    # In manual mode an error page (e.g. a bot challenge) is the operator's to resolve, so judge it afterwards.
     if wait_for_operator:
         wait_for_operator()
+        # The sync API only processes browser events during calls; this one drains what queued while blocked.
+        page.wait_for_load_state("domcontentloaded", timeout=limits.nav_timeout_s * 1000)
+        manifest.final_url = page.url
+    if manifest.http_status is not None and manifest.http_status >= 400:
+        manifest.error = f"HTTP {manifest.http_status} from {page.url}"
+        return
 
     r = manifest.readiness
     r.fonts_ready = page.evaluate(_FONTS_READY, limits.fonts_timeout_s * 1000)
@@ -122,7 +134,12 @@ def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits
     manifest.scroll_reference = Point(x=x, y=y)
 
     manifest.screenshot = _screenshot(page, out_dir / "screenshot.png", limits.screenshot_attempts)
-    complete = manifest.scroll.truncated_reason is None and manifest.screenshot.layout_consistent
+    manifest.final_url = page.url  # the page may still redirect itself during readiness waits
+    complete = (
+        manifest.scroll.truncated_reason is None
+        and manifest.screenshot.layout_consistent
+        and False not in r.model_dump(exclude={"manual"}).values()  # any timed-out wait
+    )
     manifest.status = "complete" if complete else "incomplete"
 
 

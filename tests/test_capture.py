@@ -1,4 +1,7 @@
 import json
+import time
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from threading import Thread
 from pathlib import Path
 
 import pytest
@@ -71,3 +74,50 @@ def test_cli_success_reports_no_false_timeouts(tmp_path):
     assert result.exit_code == 0, result.output
     assert "Capture complete" in result.output
     assert "timed out" not in result.output
+
+
+def test_manual_mode_records_the_page_actually_captured(tmp_path):
+    def operator():
+        time.sleep(1)  # the page navigates itself to basic.html meanwhile
+
+    m = capture(fixture_url("redirect-later.html"), tmp_path / "r", width=800, height=600, wait_for_operator=operator)
+    assert m.status == "complete", m.error
+    assert m.final_url.endswith("/basic.html")
+
+
+@pytest.fixture
+def http_404_url():
+    server = HTTPServer(("127.0.0.1", 0), SimpleHTTPRequestHandler)  # serves cwd; the path below does not exist
+    Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}/missing-page"
+    server.shutdown()
+
+
+def test_http_error_fails_the_capture(tmp_path, http_404_url):
+    m = capture(http_404_url, tmp_path / "r", width=800, height=600)
+    assert m.status == "failed"
+    assert m.http_status == 404
+
+
+def test_manual_mode_prompts_before_judging_an_error_page(tmp_path, http_404_url):
+    prompted = []
+    m = capture(http_404_url, tmp_path / "r", width=800, height=600, wait_for_operator=lambda: prompted.append(1))
+    assert prompted, "operator must get the chance to resolve an error page"
+    assert m.status == "failed" and m.http_status == 404
+
+
+def test_cancel_at_prompt_records_failed_manifest(tmp_path):
+    def operator():
+        raise EOFError
+
+    m = capture(fixture_url("basic.html"), tmp_path / "r", width=800, height=600, wait_for_operator=operator)
+    assert m.status == "failed"
+    assert json.loads((tmp_path / "r" / "manifest.json").read_text())["error"] == "Capture cancelled by the operator"
+
+
+@pytest.mark.parametrize("scale", ["inf", "nan"])
+def test_non_finite_scale_is_rejected_without_a_run_dir(tmp_path, scale):
+    out = tmp_path / "r"
+    result = CliRunner().invoke(app, ["capture", "https://example.com", "-o", str(out), "--scale", scale])
+    assert result.exit_code == 2
+    assert not out.exists()

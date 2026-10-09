@@ -1,3 +1,4 @@
+import math
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -28,6 +29,8 @@ def capture(
     ),
 ) -> None:
     """Visit URL once and save a screenshot and manifest into the run directory."""
+    if not math.isfinite(scale):
+        raise typer.BadParameter("must be a finite number.", param_hint="--scale")
     if manual_ready and not headed:
         raise typer.BadParameter("--manual-ready needs --headed so you can see the page.", param_hint="--manual-ready")
 

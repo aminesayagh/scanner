@@ -59,7 +59,7 @@ class Manifest(BaseModel):
     http_status: int | None = None
     captured_at: datetime
     viewport: Viewport
-    device_scale_factor: float = Field(gt=0)
+    device_scale_factor: float = Field(gt=0, allow_inf_nan=False)
     scroll_reference: Point | None = None
     browser: Browser | None = None
     readiness: Readiness
