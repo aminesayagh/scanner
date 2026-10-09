@@ -86,6 +86,12 @@ class Visibility(BaseModel):
     has_box: bool  # non-zero width and height
     tiny: bool  # at most 1x1 CSS px, the usual visually-hidden pattern
     offscreen: bool  # rendered, but entirely outside the document area (e.g. "sr-only" tricks)
+    # Defaults keep extractor-1 element files valid; they measured neither clipping nor covering.
+    clipped: Literal["none", "partial", "hidden"] = "none"  # own clip-path/clip; "hidden": clipped to nothing
+    clipped_ancestor: bool = False  # an ancestor is clipped to nothing, so this element paints nothing
+    # An unrelated opaque element is on top at its centre and corners. None: unknown (box not wholly in the
+    # viewport at the scroll reference, or the element is skipped by hit testing, e.g. pointer-events: none).
+    occluded: bool | None = None
     visible: bool  # all of the above allow it to be seen
 
 
