@@ -145,14 +145,12 @@ TEXT_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li"}
 
 
 def _message(element_ids: list[str], by_id) -> Message:
-    """The section's visible text, twice: `content` flat in page order (a heading followed by a paragraph
-    are siblings; a ul/ol is the only nesting), and `content_anarchie` grouped by the page's DOM branches.
+    """The section's visible text in page order, grouped by the page's DOM branches (see _by_branch).
 
     A heading, paragraph or list item is one entry with its whole text (inline links included), so text
     inside it is not repeated; other visible text is "text". Nesting is never more than one level.
     """
-    members = set(element_ids)
-    return Message(content=_flat(members, by_id), content_anarchie=_by_branch(members, by_id))
+    return Message(content=_by_branch(set(element_ids), by_id))
 
 
 def _text_of(e) -> str:
@@ -221,30 +219,6 @@ def _by_branch(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
             tag = by_id[b].tag if by_id[b].tag in ("ul", "ol") else "group"
             out.append(MessageGroup(tag=tag, children=found))
     return out
-
-
-def _flat(members: set[str], by_id) -> list[MessageItem | MessageGroup]:
-    items, used = [], set()
-    for eid in sorted(members, key=_order):
-        e = by_id[eid]
-        if eid in used or not e.visibility.visible:
-            continue
-        if e.tag in ("ul", "ol"):
-            inner = sorted(_descendants(eid, by_id), key=_order)
-            used.update(inner)
-            children = [
-                MessageItem(tag="li", text=_text_of(by_id[c]))
-                for c in inner
-                if by_id[c].tag == "li" and c in members and by_id[c].visibility.visible and _text_of(by_id[c])
-            ]
-            if children:
-                items.append(MessageGroup(tag=e.tag, children=children))
-            continue
-        if e.tag in TEXT_BLOCKS:
-            used.update(_descendants(eid, by_id))  # already part of the block's text
-        if text := _text_of(e):
-            items.append(MessageItem(tag=e.tag if e.tag in TEXT_BLOCKS else "text", text=text))
-    return items
 
 
 MEDIA = {"img", "svg", "video", "picture", "canvas", "iframe", "object", "embed"}

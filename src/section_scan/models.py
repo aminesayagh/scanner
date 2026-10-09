@@ -460,7 +460,7 @@ class MessageItem(BaseModel):
 
 
 class MessageGroup(BaseModel):
-    """Items that share a DOM branch: a ul/ol with its items, or a "group" (only in content_anarchie).
+    """Items that share a DOM branch: a ul/ol with its items, or a "group".
 
     One level only: anything nested inside the branch is flattened into `children`.
     """
@@ -472,9 +472,9 @@ class MessageGroup(BaseModel):
 
 
 class Message(BaseModel):
-    content: list[MessageItem | MessageGroup]  # visible text in page order, flat except ul/ol
-    # The same text following the page's DOM branches: one entry per branch, a group when it holds several.
-    content_anarchie: list[MessageItem | MessageGroup]
+    # The section's visible text in page order, following its DOM branches: one entry per branch,
+    # a group when the branch holds several items. One level deep.
+    content: list[MessageItem | MessageGroup]
 
 
 class ReportSection(BaseModel):

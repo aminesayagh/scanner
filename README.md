@@ -60,12 +60,6 @@ A compact summary next to `report.html`, with sections top to bottom (excluded o
       "flags": ["ambiguous", "hidden_content", "overlaps:overlay"],
       "role": "flow",
       "message": { "content": [
-        { "tag": "h2", "text": "Pricing" },
-        { "tag": "p", "text": "Pick one of these plans." },
-        { "tag": "ul", "children": [ { "tag": "li", "text": "Starter" }, { "tag": "li", "text": "Pro" } ] },
-        { "tag": "text", "text": "Start free" }
-      ],
-      "content_anarchie": [
         { "tag": "group", "children": [ { "tag": "h2", "text": "Pricing" }, { "tag": "p", "text": "Pick one of these plans." } ] },
         { "tag": "ul", "children": [ { "tag": "li", "text": "Starter" }, { "tag": "li", "text": "Pro" } ] },
         { "tag": "p", "text": "Start free" }
@@ -78,13 +72,12 @@ A compact summary next to `report.html`, with sections top to bottom (excluded o
 - **`id`:** the `id` attribute of the outermost element that wraps all of the section's visible content and
   nothing from another section, so `#id` scrolls to it; `null` when there is none.
 - **`position`:** document-space CSS pixels.
-- **`message.content`:** the visible text in page order, flat. Headings, paragraphs and list items keep
-  their tag (`h1`–`h6`, `p`, `li`), and other text is `text`. A `ul`/`ol` is the only nesting; items of
-  lists nested inside it join its `children`.
-- **`message.content_anarchie`:** the same text following the page's DOM branches. Wrappers around a
-  single branch are looked through. A branch with one item gives that item (loose text becomes `p`). A
-  branch with several items gives a `group` (or `ul`/`ol` for a list) whose `children` are all of them,
-  flattened: never a group inside a group.
+- **`message.content`:** the section's visible text in page order, following the page's DOM branches.
+  Wrappers around a single branch are looked through. A branch whose parts are single items (a heading
+  and its paragraph, the links of one nav) becomes a `group`, or `ul`/`ol` for a list, with them as
+  `children`; a lone item stays an item, and loose text becomes `p`. A branch whose parts hold several
+  items themselves is split into those parts, so a group never contains another group. Headings,
+  paragraphs and list items keep their tag (`h1`–`h6`, `p`, `li`); other text inside a group is `text`.
 - **Older captures:** captures made before extractor 3 have no `id`, title or description, and only
   80-character text previews.
 
