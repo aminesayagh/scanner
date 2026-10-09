@@ -82,7 +82,7 @@ def overlay(
         raise typer.Exit(2)
     try:
         path = write_overlay(run, ids)
-    except KeyError as e:
-        console.print(f"[red]Error:[/] {e.args[0]}")
+    except ValueError as e:
+        console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(2)
     console.print(f"Overlay written → {path}")

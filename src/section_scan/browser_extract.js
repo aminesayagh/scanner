@@ -23,10 +23,20 @@
     t = t.replace(/\s+/g, ' ').trim();
     return t.length > 80 ? t.slice(0, 79) + '…' : t;
   };
+  // The root is the page itself; a <body> that scrolls on its own (app-shell layouts) is a scroller like any other.
   const isScroller = (el, cs) =>
-    el !== root && el !== document.body &&
+    el !== root &&
     ((/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 1) ||
      (/(auto|scroll)/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1));
+  const clips = (cs) => cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
+
+  // Union of rects in viewport space; null when there is nothing to unite.
+  const union = (rects) => {
+    if (!rects.length) return null;
+    const l = Math.min(...rects.map((r) => r.x)), t = Math.min(...rects.map((r) => r.y));
+    const r = Math.max(...rects.map((r) => r.x + r.width)), b = Math.max(...rects.map((r) => r.y + r.height));
+    return { x: l, y: t, width: r - l, height: b - t };
+  };
 
   function visit(el, parentId, inherited) {
     const tag = el.tagName.toLowerCase();
@@ -37,11 +47,21 @@
     const node = { id: 'e' + out.length, parent_id: parentId, child_ids: [], tag };
     out.push(node);
 
+    const contents = cs.display === 'contents';
+    const own = contents ? null : rect(el.getBoundingClientRect());
     const pos = cs.position;
     const fixed = inherited.fixed || pos === 'fixed';
     const sticky = inherited.sticky || pos === 'sticky';
     const opacity = parseFloat(cs.opacity);
-    const childInherited = { fixed, sticky, transparent: inherited.transparent || opacity === 0 };
+    const scroller = isScroller(el, cs);
+    const childInherited = {
+      fixed,
+      sticky,
+      transparent: inherited.transparent || opacity === 0,
+      // Clipped to nothing by a zero-size ancestor, e.g. a collapsed accordion panel.
+      collapsed: inherited.collapsed || (own !== null && clips(cs) && (own.width === 0 || own.height === 0)),
+      inScroller: inherited.inScroller || scroller,
+    };
 
     if (!LEAF.has(tag)) {
       for (const c of el.children) {
@@ -50,26 +70,36 @@
       }
     }
 
-    // display: contents has no box of its own; measure what it contains instead.
-    const contents = cs.display === 'contents';
-    let vr;
+    // display: contents has no box of its own: measure its painted content (visible children and
+    // text), so an offscreen child such as a screen-reader-only span cannot stretch the wrapper.
+    let vr = own;
     if (contents) {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      vr = rect(range.getBoundingClientRect());
-    } else {
-      vr = rect(el.getBoundingClientRect());
+      const parts = node.child_ids
+        .map((id) => out[+id.slice(1)])
+        .filter((c) => c.visibility.has_box && !c.visibility.offscreen)
+        .map((c) => c.viewport_bounds);
+      for (const n of el.childNodes) {
+        if (n.nodeType !== Node.TEXT_NODE || !n.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        parts.push(rect(range.getBoundingClientRect()));
+      }
+      vr = union(parts) || { x: 0, y: 0, width: 0, height: 0 };
     }
     const bounds = { x: vr.x + scrollX, y: vr.y + scrollY, width: vr.width, height: vr.height };
     const hasBox = vr.width > 0 && vr.height > 0;
-    const offscreen = hasBox && (bounds.x + bounds.width <= 0 || bounds.y + bounds.height <= 0 ||
-                                 bounds.x >= docW || bounds.y >= docH);
+    // Content inside a scroller can sit outside the document area without being "offscreen";
+    // it is uninspected, which the scroll_container limitation records.
+    const offscreen = hasBox && !inherited.inScroller &&
+      (bounds.x + bounds.width <= 0 || bounds.y + bounds.height <= 0 || bounds.x >= docW || bounds.y >= docH);
+    const tiny = vr.width <= 1 && vr.height <= 1; // visually-hidden pattern (1x1 + clip)
 
     const limitations = [];
     if (tag === 'iframe') limitations.push('iframe');
+    if (tag === 'object' || tag === 'embed') limitations.push('embed');
     if (tag === 'canvas') limitations.push('canvas');
     if (el.shadowRoot) limitations.push('shadow_root'); // open roots only; closed ones are undetectable
-    if (isScroller(el, cs)) limitations.push('scroll_container');
+    if (scroller) limitations.push('scroll_container');
 
     Object.assign(node, {
       role: el.getAttribute('role'),
@@ -83,16 +113,20 @@
         css_visibility: cs.visibility,
         opacity,
         transparent_ancestor: inherited.transparent,
+        collapsed_ancestor: inherited.collapsed,
+        in_scroll_container: inherited.inScroller,
         has_box: hasBox,
+        tiny,
         offscreen,
-        visible: cs.visibility === 'visible' && opacity > 0 && !inherited.transparent && hasBox && !offscreen,
+        visible: cs.visibility === 'visible' && opacity > 0 && !inherited.transparent && !inherited.collapsed &&
+                 hasBox && !tiny && !offscreen,
       },
       limitations,
     });
     return node.id;
   }
 
-  visit(document.body, null, { fixed: false, sticky: false, transparent: false });
+  visit(document.body, null, { fixed: false, sticky: false, transparent: false, collapsed: false, inScroller: false });
   return {
     scroll: { x: scrollX, y: scrollY },
     document: { x: 0, y: 0, width: docW, height: docH },

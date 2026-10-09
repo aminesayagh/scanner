@@ -60,6 +60,7 @@ def test_rectangles_align_with_screenshot(run):
         by_text["Part A"],  # inside a display: contents wrapper
         by_text["Part B"],
         by_id[by_text["Below the fold"].parent_id],  # far below the first viewport
+        by_text["Wrapped block"],
     ]
     centers = [((e.bounds.x + e.bounds.width / 2) * SCALE, (e.bounds.y + e.bounds.height / 2) * SCALE) for e in blocks]
     for e, got in zip(blocks, sample_pixels(out / "screenshot.png", centers)):
@@ -136,8 +137,8 @@ def test_snapshot_rejects_broken_references():
     el = dict(
         tag="div", role=None, text="", box="normal", positioning="flow", styles={}, limitations=[],
         bounds=dict(x=0, y=0, width=1, height=1), viewport_bounds=dict(x=0, y=0, width=1, height=1),
-        visibility=dict(css_visibility="visible", opacity=1, transparent_ancestor=False,
-                        has_box=True, offscreen=False, visible=True),
+        visibility=dict(css_visibility="visible", opacity=1, transparent_ancestor=False, collapsed_ancestor=False,
+                        in_scroll_container=False, has_box=True, tiny=False, offscreen=False, visible=True),
     )
     base = dict(capture_id="c", extractor_version="1", scroll=dict(x=0, y=0),
                 document=dict(x=0, y=0, width=1, height=1))
@@ -146,3 +147,68 @@ def test_snapshot_rejects_broken_references():
         ElementSnapshot(**base, elements=orphan)
     with pytest.raises(ValueError, match="duplicate"):
         ElementSnapshot(**base, elements=[dict(el, id="e0", parent_id=None, child_ids=[])] * 2)
+
+
+def snapshot_of(run_dir: Path) -> ElementSnapshot:
+    return ElementSnapshot.model_validate_json((run_dir / "elements.json").read_text())
+
+
+def test_below_the_fold_media_aligns(run):
+    out, snap, *_ = run
+    img = next(e for e in snap.elements if e.tag == "img")
+    assert img.bounds.y > VIEWPORT_H and img.visibility.visible
+    center = ((img.bounds.x + img.bounds.width / 2) * SCALE, (img.bounds.y + img.bounds.height / 2) * SCALE)
+    assert sample_pixels(out / "screenshot.png", [center]) == [[255, 128, 0]]
+
+
+def test_contents_wrapper_ignores_offscreen_children(run):
+    _, _, by_text, by_id = run
+    block = by_text["Wrapped block"]
+    assert by_text["Wrapped hidden"].visibility.offscreen
+    assert by_id[block.parent_id].bounds == block.bounds
+
+
+def test_visually_hidden_and_collapsed_content_is_not_visible(run):
+    _, _, by_text, _ = run
+    skip = by_text["Skip to content"].visibility
+    assert skip.tiny and not skip.visible
+    accordion = by_text["Accordion body"].visibility
+    assert accordion.collapsed_ancestor and not accordion.visible
+
+
+def test_object_is_recorded_as_uninspected(run):
+    _, snap, *_ = run
+    assert next(e for e in snap.elements if e.tag == "object").limitations == ["embed"]
+
+
+def test_scrolling_body_is_a_limitation_not_offscreen(tmp_path):
+    out = tmp_path / "r"
+    m = capture((FIXTURES / "app-shell.html").resolve().as_uri(), out, width=800, height=VIEWPORT_H)
+    assert m.status == "complete", m.error
+    snap = snapshot_of(out)
+    assert "scroll_container" in snap.elements[0].limitations
+    third = next(e for e in snap.elements if e.text == "Panel three")
+    assert third.visibility.in_scroll_container and not third.visibility.offscreen
+
+
+def test_bounds_are_document_space_when_captured_scrolled(tmp_path):
+    out = tmp_path / "r"
+    m = capture((FIXTURES / "scroll-locked.html").resolve().as_uri(), out, width=800, height=VIEWPORT_H, scale=SCALE)
+    assert m.status == "complete", m.error
+    assert m.scroll_reference.y > 0  # the page blocked the return to the top
+    snap = snapshot_of(out)
+    blocks = [e for e in snap.elements if e.text in ("Bar", "One", "Two", "Three")]
+    centers = [((e.bounds.x + e.bounds.width / 2) * SCALE, (e.bounds.y + e.bounds.height / 2) * SCALE) for e in blocks]
+    for e, got in zip(blocks, sample_pixels(out / "screenshot.png", centers)):
+        assert got == rgb(e.styles["backgroundColor"]), e
+
+
+def test_empty_page_is_incomplete_and_overlay_explains(tmp_path):
+    page = tmp_path / "empty.html"
+    page.write_text("<!doctype html><body style='display: none'><p>never rendered</p></body>")
+    out = tmp_path / "r"
+    m = capture(page.as_uri(), out, width=800, height=VIEWPORT_H)
+    assert m.status == "incomplete"
+    result = CliRunner().invoke(app, ["overlay", str(out)])
+    assert result.exit_code == 2
+    assert "no extracted elements" in result.output

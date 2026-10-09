@@ -16,12 +16,19 @@
   #scroller { height: 100px; overflow: auto; }
   #spacer { height: 1200px; }
   #below { height: 300px; background: rgb(30, 160, 60); }
+  #wrapped-block { height: 100px; background: rgb(0, 150, 150); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  #accordion { height: 0; overflow: hidden; }
 </style></head>
 <body>
 <header id="top"><a href="#">Logo</a></header>
 <nav id="mobile">Mobile menu</nav>
 <section id="hero"><h1>Hero title</h1></section>
 <div id="wrap"><div id="a" class="half">Part A</div><div id="b" class="half">Part B</div></div>
+<div style="display: contents"><span class="sr-only">Wrapped hidden</span><div id="wrapped-block">Wrapped block</div></div>
+<a class="visually-hidden" href="#hero">Skip to content</a>
+<div id="accordion"><p>Accordion body</p></div>
+<object style="width: 40px; height: 40px"></object>
 <div id="stick">Sticky bar</div>
 <div id="ghost">Ghost text</div>
 <span class="sr-only">Screen reader only</span>
@@ -30,5 +37,8 @@
 <canvas width="50" height="50"></canvas>
 <iframe srcdoc="<p>inside</p>" style="height: 50px"></iframe>
 <div id="spacer"></div>
-<section id="below"><h2>Below the fold</h2></section>
+<section id="below"><h2>Below the fold</h2>
+  <img alt="Below-fold image" width="100" height="50"
+       src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='50'><rect width='100' height='50' fill='rgb(255,128,0)'/></svg>">
+</section>
 </body></html>

@@ -81,7 +81,10 @@ class Visibility(BaseModel):
     css_visibility: str
     opacity: float = Field(ge=0, le=1)
     transparent_ancestor: bool  # an ancestor has opacity 0, so this element paints nothing
+    collapsed_ancestor: bool  # a clipping ancestor has zero width or height (e.g. closed accordion)
+    in_scroll_container: bool  # inside a nested scroller: what shows depends on its scroll position
     has_box: bool  # non-zero width and height
+    tiny: bool  # at most 1x1 CSS px, the usual visually-hidden pattern
     offscreen: bool  # rendered, but entirely outside the document area (e.g. "sr-only" tricks)
     visible: bool  # all of the above allow it to be seen
 
@@ -100,7 +103,7 @@ class Element(BaseModel):
     positioning: Literal["flow", "absolute", "sticky", "fixed"]  # fixed/sticky include inherited from ancestors
     styles: dict[str, str]
     visibility: Visibility
-    limitations: list[Literal["iframe", "canvas", "shadow_root", "scroll_container"]]
+    limitations: list[Literal["iframe", "embed", "canvas", "shadow_root", "scroll_container"]]
 
 
 class ElementSnapshot(BaseModel):

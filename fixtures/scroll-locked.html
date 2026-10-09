@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Scroll locked</title>
+<style>
+  body { margin: 0; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 50px; background: rgb(17, 102, 204); }
+  .block { height: 700px; }
+  #one { background: rgb(220, 30, 30); }
+  #two { background: rgb(30, 160, 60); }
+  #three { background: rgb(240, 200, 0); }
+</style></head>
+<body>
+<div id="bar">Bar</div>
+<div id="one" class="block">One</div><div id="two" class="block">Two</div><div id="three" class="block">Three</div>
+<script>
+  // The page refuses scripted scrolling back to the top, so capture happens at a non-zero scroll offset.
+  window.scrollTo = () => {};
+</script>
+</body></html>

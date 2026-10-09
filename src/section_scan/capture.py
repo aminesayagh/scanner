@@ -157,6 +157,7 @@ def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits
         manifest.scroll.truncated_reason is None
         and manifest.screenshot.layout_consistent
         and False not in r.model_dump(exclude={"manual"}).values()  # any timed-out wait
+        and len(snapshot.elements) > 0  # an empty page is an unsupported analysis, not a page with no content
     )
     manifest.status = "complete" if complete else "incomplete"
 

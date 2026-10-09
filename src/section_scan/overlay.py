@@ -24,7 +24,9 @@ def write_overlay(run_dir: Path, ids: list[str]) -> Path:
     by_id = {e.id: e for e in snapshot.elements}
     unknown = [i for i in ids if i not in by_id]
     if unknown:
-        raise KeyError(f"Unknown element IDs: {', '.join(unknown)}")
+        raise ValueError(f"Unknown element IDs: {', '.join(unknown)}")
+    if not snapshot.elements:
+        raise ValueError("The capture has no extracted elements to draw.")
     selected = [by_id[i] for i in ids or snapshot.elements[0].child_ids]
 
     # Size the image in CSS pixels, derived from its real pixel width, so CSS-pixel bounds line up.
