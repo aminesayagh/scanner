@@ -292,6 +292,15 @@ class BoundaryProposal(BaseModel):
     basis: Literal["landmark", "gap", "visual", "structural", "none"]
 
 
+class SectionLimitation(BaseModel):
+    """An area inside a section that the capture could not show, so it must not be read as empty."""
+
+    kind: Literal["hidden_content"]  # rendered elements left invisible (e.g. scroll-reveal before scrolling)
+    top: float = Field(allow_inf_nan=False)  # document-space y range of the area
+    bottom: float = Field(allow_inf_nan=False)
+    element_count: int = Field(ge=1)  # hidden elements found in the range
+
+
 class SectionProposal(BaseModel):
     id: str
     order: int = Field(ge=0)
@@ -306,6 +315,7 @@ class SectionProposal(BaseModel):
     ambiguous: bool  # an adjoining boundary was undecided; review should look here first
     overlaps: list[tuple[str, Literal["overlay", "header_over_content", "content"]]]
     notes: list[str]
+    limitations: list[SectionLimitation] = []
 
 
 class ProposalSnapshot(BaseModel):
@@ -331,6 +341,7 @@ class ReviewRegion(BaseModel):
     source_section_ids: list[str]  # proposal sections this region came from
     ambiguous: bool  # came from an undecided proposal boundary
     notes: list[str]  # corrections, manual boundaries and allocation decisions
+    limitations: list[SectionLimitation] = []  # carried from the proposals; kept with the part they lie in
 
 
 class ReviewOperation(BaseModel):
@@ -372,6 +383,7 @@ class ExportRegion(BaseModel):
     element_ids: list[str]  # snapshot-specific source references (valid for this capture only)
     source_section_ids: list[str]
     overlaps: list[tuple[str, Literal["overlay", "header_over_content", "content"]]]
+    limitations: list[SectionLimitation] = []
 
 
 class ExportDocument(BaseModel):

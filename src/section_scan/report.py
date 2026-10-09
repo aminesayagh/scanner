@@ -36,20 +36,21 @@ def write_report(run: Path, review: ReviewState | None) -> Path:
     css_width = manifest.screenshot.width_px / manifest.device_scale_factor  # scale from real pixel size
 
     if review is not None:
-        rows = [(r.id, r.label, r.role, r.status, r.bounds, r.ambiguous, r.notes) for r in review.regions]
+        rows = [(r.id, r.label, r.role, r.status, r.bounds, r.ambiguous, r.notes, r.limitations) for r in review.regions]
         revision = review.revision
     else:
-        rows = [(s.id, s.label, s.role, "proposed", s.bounds, s.ambiguous, s.notes) for s in props.sections]
+        rows = [(s.id, s.label, s.role, "proposed", s.bounds, s.ambiguous, s.notes, s.limitations) for s in props.sections]
         revision = None
 
     boxes, items = [], []
-    for n, (rid, label, role, status, b, ambiguous, notes) in enumerate(rows, 1):
+    for n, (rid, label, role, status, b, ambiguous, notes, limits) in enumerate(rows, 1):
         cls = " ".join(["region", status, "ambiguous" if ambiguous else ""])
         boxes.append(
             f'<div class="{cls}" style="left:{b.x}px;top:{b.y}px;width:{b.width}px;height:{b.height}px">'
             f"<b>{n}</b></div>"
         )
-        flag = " · ambiguous boundary" if ambiguous else ""
+        flag = (" · ambiguous boundary" if ambiguous else "") + (" · hidden content" if limits else "")
+        notes = [describe_limitation(x) for x in limits] + notes
         items.append(
             f"<tr><td>{n}</td><td>{escape(rid)}</td><td>{escape(label)}</td><td>{role}</td>"
             f"<td>{status}{flag}</td><td>{b.y:.0f}–{b.y + b.height:.0f}</td>"
@@ -97,6 +98,11 @@ def write_report(run: Path, review: ReviewState | None) -> Path:
     out = run / "report.html"
     out.write_text(html)
     return out
+
+
+def describe_limitation(x) -> str:
+    return (f"hidden content at y {x.top:.0f}–{x.bottom:.0f} ({x.element_count} elements captured invisible, "
+            "e.g. revealed only while scrolling): not inspected, not empty")
 
 
 def report_fingerprint(run: Path) -> str | None:
