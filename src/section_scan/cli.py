@@ -1,4 +1,6 @@
+import json
 import math
+import os
 import shlex
 import tomllib
 import webbrowser
@@ -17,6 +19,7 @@ from .candidates import generate
 from .detector import detect as detect_sections
 from .evaluate import Annotation
 from .evaluate import evaluate as evaluate_run
+from . import classify as classify_mod
 from . import export as export_mod
 from . import review as review_mod
 from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
@@ -30,9 +33,22 @@ app = typer.Typer(help="Capture a webpage, propose its major sections, review th
 console = Console()
 
 
+def load_dotenv(path: Path = Path(".env")) -> None:
+    """KEY=VALUE lines from ./.env into the environment (e.g. TYPESAFE_API_KEY); real variables win."""
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if value and key not in os.environ:
+            os.environ[key] = value.strip("'\"")
+
+
 @app.callback()
 def main() -> None:
-    pass
+    load_dotenv()
 
 
 @app.command()
@@ -494,3 +510,114 @@ def evaluate(
     console.print(table)
     for d in dict.fromkeys(details):
         console.print(f"  {escape_markup(d)}")
+
+
+def make_typesafe_client():
+    """The TypeSafe client (TYPESAFE_API_KEY from the environment); replaced in tests."""
+    from typesafe_sdk import TypeSafeClient
+
+    return TypeSafeClient()
+
+
+@app.command()
+def classify(
+    run: Path = typer.Argument(..., exists=True, file_okay=False, help="Directory holding report.json."),
+    review_labels: bool = typer.Option(True, "--review/--no-review", help="Confirm each label after proposing."),
+    hide_dom_id: bool = typer.Option(False, "--hide-dom-id", help="Leave DOM ids out of the input (evaluation)."),
+) -> None:
+    """Propose a label for every section with Jev, then confirm, change or leave each one unresolved.
+
+    Progress is saved after every proposal and decision; rerunning resumes. Writes report-classified.json.
+    """
+    from typesafe_sdk import TypeSafeError
+
+    report_path = run / "report.json"
+    if not report_path.exists():
+        console.print(f"[red]Error:[/] {run} has no report.json; run `section-scan report {run}` first.")
+        raise typer.Exit(2)
+    report_doc = json.loads(report_path.read_text())
+    model = classify_mod.requested_model()
+
+    def progress(key, p):
+        what = f"{p.label} ({p.confidence:.2f})" if p.status == "proposed" and p.confidence is not None else p.label
+        if p.status == "failed":
+            what = f"[red]failed[/] {escape_markup(p.error or '')}"
+        elif p.source == "preprocessing":
+            what = f"{p.label} [dim]({p.reason}, no request)[/]"
+        console.print(f"  {key}: {what}")
+
+    console.print(f"[dim]Model {model}, label registry {classify_mod.REGISTRY_VERSION}[/]")
+    try:
+        state = classify_mod.ensure_proposals(run, report_doc, make_typesafe_client, model, hide_dom_id, progress)
+    except TypeSafeError as e:
+        console.print(f"[red]Cannot reach TypeSafe:[/] {escape_markup(str(e))}\nSet TYPESAFE_API_KEY (from the TypeSafe console) and rerun.")
+        raise typer.Exit(2)
+
+    if review_labels:
+        _review_labels(run, report_doc, state)
+    path = classify_mod.export(run, report_doc, state)
+    statuses = [s.decision.status if s.decision else (s.proposal.status if s.proposal else "pending") for s in state.sections.values()]
+    console.print(f"Classified report → {path}  ({', '.join(f'{statuses.count(x)} {x}' for x in sorted(set(statuses)))})")
+
+
+def _review_labels(run: Path, report_doc: dict, state) -> None:
+    labels = list(classify_mod.LABELS)
+    for i, section in enumerate(report_doc["sections"]):
+        key = classify_mod.section_key(i)
+        s = state.sections.get(key)
+        if s is None or s.proposal is None or s.decision is not None:
+            continue
+        p = s.proposal
+        heading, preview = _heading_and_preview(section["message"])
+        console.rule(f"{key} · id {section.get('id') or '—'} · {section['role']}")
+        console.print(f"[bold]{escape_markup(heading or '(no heading)')}[/]")
+        if preview:
+            console.print(f"[dim]{escape_markup(preview)}[/]")
+        if p.status == "failed":
+            console.print(f"[red]No proposal:[/] {escape_markup(p.error or '')}")
+        elif p.source == "preprocessing":
+            console.print(f"Proposed: [bold]{p.label}[/] ({p.reason}; no request made)")
+        else:
+            ranked = sorted(p.probabilities.items(), key=lambda kv: -kv[1])
+            alts = ", ".join(f"{label} {prob:.0%}" for label, prob in ranked[1:3])
+            console.print(f"Proposed: [bold]{p.label}[/] {ranked[0][1]:.0%} (confidence {p.confidence:.2f}) · next: {alts}")
+        while True:
+            options = "[c]hoose another, [u]nresolved, [q]uit" if p.status == "failed" else "[a]ccept, [c]hoose another, [u]nresolved, [q]uit"
+            try:
+                answer = console.input(f"{options} > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if answer in ("q", "quit"):
+                return
+            if answer in ("a", "accept") and p.status != "failed":
+                classify_mod.decide(run, state, key, "confirmed", p.label)
+            elif answer in ("u", "unresolved"):
+                classify_mod.decide(run, state, key, "unresolved", None)
+            elif answer in ("c", "choose"):
+                for n, label in enumerate(labels, 1):
+                    console.print(f"  {n:>2}. {label} — {escape_markup(classify_mod.LABELS[label]['what'])}")
+                pick = console.input("label number or name > ").strip().lower()
+                chosen = labels[int(pick) - 1] if pick.isdigit() and 0 < int(pick) <= len(labels) else pick
+                if chosen not in classify_mod.LABELS:
+                    console.print("[red]Not a label in the registry.[/]")
+                    continue
+                classify_mod.decide(run, state, key, "confirmed", chosen)
+            else:
+                continue
+            console.print(f"[green]Saved[/] {key}: {state.sections[key].decision.status} {state.sections[key].decision.label or ''}")
+            break
+
+
+def _heading_and_preview(message: list) -> tuple[str | None, str]:
+    flat = []
+
+    def walk(entries):
+        for e in entries:
+            if "text" in e:
+                flat.append(e)
+            walk(e.get("children", []))
+
+    walk(message)
+    heading = next((e["text"] for e in flat if e["tag"] in ("h1", "h2", "h3", "h4", "h5", "h6")), None)
+    preview = " · ".join(e["text"] for e in flat if e["text"] != heading)
+    return heading, (preview[:160] + "…") if len(preview) > 160 else preview

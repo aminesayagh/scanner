@@ -11,3 +11,8 @@ wheels/
 
 # Capture runs
 runs/
+.serena
+
+# Secrets (API keys) and local tool folders
+.env
+.claude/

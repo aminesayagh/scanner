@@ -120,6 +120,33 @@ A compact summary next to `report.html`, with sections top to bottom (excluded o
 - **Older captures:** captures made before extractor 3 have no `id`, title or description, and only
   80-character text previews.
 
+## Classifying sections (Jev)
+
+```bash
+uv run section-scan classify runs/example            # propose with Jev, then confirm each label
+uv run section-scan classify runs/example --no-review
+uv run section-scan classify runs/example --hide-dom-id   # evaluation: same content without DOM ids
+```
+
+- **API key:** put `TYPESAFE_API_KEY=…` in `./.env` (git-ignored; a real environment variable wins).
+  `TYPESAFE_DEFAULT_MODEL` picks the model (default `jev-latest`).
+- **Labels:** the registry in `src/section_scan/labels.py` (version `REGISTRY_VERSION`), shared by the
+  Jev requests and the review screen: `header`, `footer`, `hero`, `about`, `services`, `portfolio`,
+  `case_studies`, `testimonials`, `faq`, `gallery`, `contact`, `cta`, `other`, `unknown`.
+- **Input per section:** the page title and description, order, layout role, DOM id (a hint), and
+  `message` with its hierarchy. Exact duplicates are removed. Long content keeps the headings and the
+  first items of each group, and is marked `input_shortened`.
+- **Requests:** a section with no usable text is proposed `unknown` (`insufficient_content`, source
+  `preprocessing`) without a request. Every other section gets one `Choice` request. A failed request is
+  `failed`, never `unknown`, and is retried on the next run.
+- **Review:** sections are shown in page order with the heading, a preview, the proposal and the next two
+  labels. Actions: accept, choose another, leave unresolved, or quit (progress is kept). Your decision is
+  stored separately from Jev's proposal.
+- **Files:** `classification.json` holds the state, saved after every step. `report-classified.json` is
+  the report with a `classification` object per section.
+- **Reuse:** proposals are reused only when the input, instructions, registry and requested model all
+  match. A decision made on older evidence is dropped.
+
 ## Section policy
 
 - A **section** is a major visual or functional region of a vertically flowing page. It may span several
