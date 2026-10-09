@@ -252,3 +252,67 @@ class CandidateSnapshot(BaseModel):
         if missing := set(refs) - ids:
             raise ValueError(f"unknown region IDs: {sorted(missing)}")
         return self
+
+
+class DetectorConfig(BaseModel):
+    """Tunable detector parameters (detector.toml). Experimental values, not validated constants."""
+
+    model_config = {"extra": "forbid"}
+
+    gap_ratio_threshold: float = Field(3.0, gt=0, allow_inf_nan=False)
+    fallback_spacing_floor: float = Field(16.0, gt=0, allow_inf_nan=False)  # CSS px, when no line height is measurable
+    min_spacing_observations: int = Field(2, ge=1)  # internal gaps needed before a side's spacing counts
+
+
+class SpacingEstimate(BaseModel):
+    value: float | None  # median positive internal vertical gap; None = unknown (not zero)
+    observations: int = Field(ge=0)
+
+
+class BoundaryProposal(BaseModel):
+    id: str  # same ID as the candidate boundary it decides
+    level: int = Field(ge=0)
+    above_region_id: str
+    below_region_id: str
+    y: float = Field(allow_inf_nan=False)
+    gap: float | None  # g: non-negative content gap; None when a side has no content
+    spacing_above: SpacingEstimate  # sA
+    spacing_below: SpacingEstimate  # sB
+    spacing_floor: float = Field(gt=0, allow_inf_nan=False)
+    spacing_floor_source: Literal["line_height", "fallback"]
+    spacing_scale: float | None  # max(sA, sB, floor) when a side is known
+    gap_ratio: float | None  # g / spacing_scale; None when neither side has reliable spacing
+    supporting: list[str]
+    opposing: list[str]
+    rules: list[str]  # rule outcomes in the order they were checked
+    decision: Literal["keep", "split", "ambiguous"]  # keep = same section; split = section boundary
+    basis: Literal["landmark", "gap", "visual", "structural", "none"]
+
+
+class SectionProposal(BaseModel):
+    id: str
+    order: int = Field(ge=0)
+    label: str  # provisional, e.g. "Section 3"; naming is a manual annotation
+    role: Literal["header", "footer", "flow", "overlay"]
+    region_ids: list[str]
+    group_ids: list[str]
+    element_ids: list[str]
+    bounds: Rect
+    boundary_above_id: str | None
+    boundary_below_id: str | None
+    ambiguous: bool  # an adjoining boundary was undecided; review should look here first
+    overlaps: list[tuple[str, Literal["overlay", "header_over_content", "content"]]]
+    notes: list[str]
+
+
+class ProposalSnapshot(BaseModel):
+    schema_version: int = SCHEMA_VERSION
+    capture_id: str
+    detector_version: str
+    config: DetectorConfig  # the full effective configuration
+    status: Literal["ok", "unsupported"]  # unsupported: no main content found, not "zero sections"
+    notes: list[str]
+    boundaries: list[BoundaryProposal]
+    sections: list[SectionProposal]
+    # Groups no section claims: the page root, wrappers opened or split across sections, loose layers.
+    unassigned_group_ids: list[str]

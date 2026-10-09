@@ -1,7 +1,7 @@
 from html import escape
 from pathlib import Path
 
-from .models import CandidateSnapshot, ElementSnapshot, GroupSnapshot, Manifest
+from .models import CandidateSnapshot, ElementSnapshot, GroupSnapshot, Manifest, ProposalSnapshot
 
 _STYLE = """
 body { margin: 0; font: 13px system-ui, sans-serif; }
@@ -17,15 +17,24 @@ td, th { border: 1px solid #ccc; padding: 2px 6px; text-align: left; }
 """
 
 
-def write_overlay(run_dir: Path, ids: list[str], group_ids: list[str] = (), regions: bool = False) -> Path:
-    """Draw selected elements, visual groups, or top-level candidate regions over the screenshot.
+def write_overlay(
+    run_dir: Path, ids: list[str], group_ids: list[str] = (), regions: bool = False, sections: bool = False
+) -> Path:
+    """Draw selected elements, visual groups, top-level candidate regions or proposed sections.
 
     Default: the body's children.
     """
     manifest = Manifest.model_validate_json((run_dir / "manifest.json").read_text())
-    if regions:
+    positioning = {"overlay": "fixed", "header": "sticky", "footer": "sticky"}
+    if sections:
+        props = ProposalSnapshot.model_validate_json((run_dir / "proposals.json").read_text())
+        rows = [
+            (s.id, s.label, positioning.get(s.role, "flow"), not s.ambiguous, s.bounds,
+             "; ".join([s.role, *(["ambiguous boundary"] if s.ambiguous else []), *s.notes]))
+            for s in props.sections
+        ]
+    elif regions:
         cands = CandidateSnapshot.model_validate_json((run_dir / "candidates.json").read_text())
-        positioning = {"overlay": "fixed", "header": "sticky"}
         rows = [
             (r.id, r.role, positioning.get(r.role, "flow"), True, r.bounds, "; ".join([" ".join(r.group_ids), *r.notes]))
             for r in cands.regions

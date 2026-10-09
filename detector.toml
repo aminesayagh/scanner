@@ -1,0 +1,11 @@
+# Section detector parameters. These are experimental starting points, not validated constants:
+# tune them against the evaluation fixtures and real captures, then record what you chose.
+
+# A content gap this many times the local spacing scale counts as a strong relative gap.
+gap_ratio_threshold = 3.0
+
+# Spacing floor (CSS px) used when no line height can be measured near a boundary.
+fallback_spacing_floor = 16.0
+
+# Internal gaps a side needs before its spacing estimate is trusted.
+min_spacing_observations = 2
