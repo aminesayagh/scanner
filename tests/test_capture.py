@@ -55,13 +55,18 @@ def test_navigation_failure_is_recorded_and_exits_nonzero(tmp_path):
     assert all(json.loads((out / bp / "manifest.json").read_text())["status"] == "failed" for bp in ("laptop", "tablet", "mobile"))
 
 
-def test_existing_capture_is_never_overwritten(tmp_path):
+def test_recapture_updates_the_folder_and_keeps_self_checking_state(tmp_path):
     out = tmp_path / "run"
-    capture(fixture_url("basic.html"), out, width=800, height=600)
-    before = (out / "manifest.json").read_bytes()
-    with pytest.raises(FileExistsError):
-        capture(fixture_url("basic.html"), out, width=800, height=600)
-    assert (out / "manifest.json").read_bytes() == before
+    first = capture(fixture_url("basic.html"), out, width=800, height=600)
+    (out / "proposals.json").write_text("{}")  # derived from the old capture
+    (out / "sections").mkdir()
+    (out / "sections" / "00-header.png").write_bytes(b"old")
+    (out / "classification.json").write_text("{}")  # checks itself against new input
+    second = capture(fixture_url("basic.html"), out, width=800, height=600)
+    assert second.capture_id != first.capture_id
+    assert json.loads((out / "manifest.json").read_text())["capture_id"] == second.capture_id
+    assert not (out / "proposals.json").exists() and not (out / "sections").exists()
+    assert (out / "classification.json").exists()
 
 
 def test_manual_ready_requires_headed(tmp_path):

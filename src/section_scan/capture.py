@@ -91,9 +91,6 @@ def capture(
     `device` names a Playwright device (e.g. "iPhone 13") whose user agent, mobile mode and touch are used,
     so sites that serve different HTML to phones and tablets do so; width/height still set the viewport.
     """
-    if (out_dir / "manifest.json").exists():
-        raise FileExistsError(f"{out_dir} already holds a capture; captures are immutable, choose a new --output")
-
     # Built before mkdir so invalid inputs (e.g. a non-finite scale) fail without leaving a directory.
     manifest = Manifest(
         capture_id=uuid.uuid4().hex,
@@ -104,6 +101,7 @@ def capture(
         device_scale_factor=scale,
         readiness=Readiness(manual=wait_for_operator is not None),
     )
+    replace_outputs(out_dir)  # a recapture updates the folder instead of needing a new one
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         with sync_playwright() as p:
@@ -132,6 +130,25 @@ def capture(
 
     (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     return manifest
+
+
+# Files produced from a capture. A recapture removes them so nothing stale survives; review.json and
+# classification.json stay: each checks itself against the new data (a review needs --restart once the
+# proposals change; classification reuses only proposals whose input is unchanged).
+DERIVED = (
+    "manifest.json", "screenshot.png", "elements.json", "groups.json", "candidates.json", "proposals.json",
+    "report.html", "report.json", "report-classified.json", "overlay.html",
+)
+
+
+def replace_outputs(out_dir: Path) -> None:
+    for name in DERIVED:
+        (out_dir / name).unlink(missing_ok=True)
+    sections = out_dir / "sections"
+    if sections.is_dir():
+        for f in sections.glob("*.png"):
+            f.unlink()
+        sections.rmdir()
 
 
 def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits: Limits) -> None:

@@ -26,6 +26,7 @@ from .models import DetectorConfig, ElementSnapshot, ProposalSnapshot
 from .normalize import normalize
 from .breakpoints import BREAKPOINTS, site_runs
 from .breakpoints import merge as merge_breakpoints
+from .board import Cropper, build_board, latest_per_page, write_section_shots
 from .overlay import write_overlay
 from .report import describe_limitation, report_fingerprint, write_report
 
@@ -75,9 +76,10 @@ def capture(
 
     if width is None and height is None:
         targets = [(bp, output / bp, b.width, b.height, b.device) for bp, b in BREAKPOINTS.items()]
-        if taken := [str(t[1]) for t in targets if (t[1] / "manifest.json").exists()]:
-            console.print(f"[red]Error:[/] already captured: {', '.join(taken)}; choose a new --output")
-            raise typer.Exit(2)
+        if any((t[1] / "manifest.json").exists() for t in targets):
+            console.print(f"[dim]Updating the previous capture in {output}[/]")
+        for name in ("report.json", "report-classified.json"):  # the merged reports are rebuilt from the new loads
+            (output / name).unlink(missing_ok=True)
     else:
         targets = [(None, output, width or 1440, height or 900, None)]
 
@@ -90,15 +92,11 @@ def capture(
 
         # The spinner would hide the Enter prompt, so manual mode runs without it.
         spinner = nullcontext() if manual_ready else console.status(f"Capturing {url} as {label}")
-        try:
-            with spinner:
-                m = run_capture(
-                    url, out, width=w, height=h, scale=scale, headed=headed, device=device,
-                    wait_for_operator=wait_for_operator if manual_ready else None,
-                )
-        except FileExistsError as e:
-            console.print(f"[red]Error:[/] {e}")
-            raise typer.Exit(2)
+        with spinner:
+            m = run_capture(
+                url, out, width=w, height=h, scale=scale, headed=headed, device=device,
+                wait_for_operator=wait_for_operator if manual_ready else None,
+            )
         failed |= not _print_capture(m, out, label)
     if failed:
         raise typer.Exit(1)
@@ -257,6 +255,10 @@ def report(
             raise typer.Exit(2)
         for bp, path in runs.items():
             _report_one(path, open_=False)
+        with Cropper() as cropper:
+            for path in runs.values():
+                shots = write_section_shots(path, cropper)
+                console.print(f"Section screenshots → {path / 'sections'}  ({len(shots)})")
         doc = merge_breakpoints(runs)
         (run / "report.json").write_text(doc.model_dump_json(indent=2, exclude_defaults=True))
         console.print(f"Merged report → {run / 'report.json'}  ({len(doc.sections)} sections, {', '.join(runs)})")
@@ -264,6 +266,9 @@ def report(
             webbrowser.open((runs[next(iter(runs))] / "report.html").resolve().as_uri())
         return
     _report_one(run, open_)
+    with Cropper() as cropper:
+        shots = write_section_shots(run, cropper)
+    console.print(f"Section screenshots → {run / 'sections'}  ({len(shots)})")
 
 
 def _report_one(run: Path, open_: bool) -> None:
@@ -678,3 +683,27 @@ def _heading_and_preview(message: list) -> tuple[str | None, str]:
     heading = next((e["text"] for e in flat if e["tag"] in ("h1", "h2", "h3", "h4", "h5", "h6")), None)
     preview = " · ".join(e["text"] for e in flat if e["text"] != heading)
     return heading, (preview[:160] + "…") if len(preview) > 160 else preview
+
+
+@app.command()
+def board(
+    runs: list[Path] = typer.Argument(None, help="Run or three-breakpoint directories. Default: every report in ./runs."),
+    output: Path = typer.Option(Path("boards/sections.excalidraw"), "--output", "-o", help="Excalidraw file to write."),
+) -> None:
+    """One Excalidraw board of every page: a row per page with a note at its top left, sections left to right.
+
+    Uses report-classified.json labels when present; three-breakpoint captures show their laptop layout.
+    """
+    if runs:
+        targets = [r for r in runs if (r / "report.json").exists()]
+    else:
+        targets = latest_per_page(p for p in sorted(Path("runs").iterdir()) if p.is_dir() and (p / "report.json").exists())
+    if not targets:
+        console.print("[red]Error:[/] no report.json found; run `section-scan report <run>` first.")
+        raise typer.Exit(2)
+    with Cropper() as cropper:
+        scene = build_board(targets, cropper)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(scene))
+    images = sum(e["type"] == "image" for e in scene["elements"])
+    console.print(f"Board → {output}  ({len(targets)} pages, {images} sections)")

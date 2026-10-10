@@ -75,6 +75,26 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
 - Random content that also changes the page's structure between loads can still be mismatched.
 - Element `id`s generated anew on each load make DOM paths differ; matching then falls back to text.
 
+## Section screenshots and the board
+
+- **Section screenshots:** `report` also saves one screenshot per section in `RUN/sections/`
+  (`NN-<id or role>.png`, full resolution). For a three-breakpoint capture, each breakpoint folder gets
+  its own. They are cropped from the saved screenshot, so the site is not visited again.
+- **The board:** `section-scan board` writes `boards/sections.excalidraw`, one Excalidraw file for every
+  page.
+  - **Rows:** one per page, top to bottom, with a note at the top left (title, link, and industry and
+    scope once classified).
+  - **Sections:** left to right, each with a note at its top left (its confirmed or proposed label, or
+    its role, and `#id`).
+  - **Breakpoint:** three-breakpoint captures show their laptop layout.
+  - **Which captures:** without arguments it takes the most recent capture of each page in `./runs`;
+    pass folders to choose.
+
+**Re-running a site:** `capture` into an existing folder updates it. The new capture replaces the old
+screenshot, elements and everything derived from them. `classification.json` and `review.json` are kept:
+classification reuses only proposals whose input is unchanged, and a review asks for `--restart` once
+the proposals change.
+
 ## report.json
 
 A compact summary next to `report.html`, with sections top to bottom (excluded ones left out):
