@@ -525,9 +525,11 @@ def classify(
     review_labels: bool = typer.Option(True, "--review/--no-review", help="Confirm each label after proposing."),
     hide_dom_id: bool = typer.Option(False, "--hide-dom-id", help="Leave DOM ids out of the input (evaluation)."),
 ) -> None:
-    """Propose a label for every section with Jev, then confirm, change or leave each one unresolved.
+    """Propose a label for every section with Jev, then the page's industry and scope (page type); confirm,
+    change or leave each one unresolved.
 
-    Progress is saved after every proposal and decision; rerunning resumes. Writes report-classified.json.
+    Sections come first, so the page is judged with your section labels. Progress is saved after every
+    proposal and decision; rerunning resumes. Writes report-classified.json.
     """
     from typesafe_sdk import TypeSafeError
 
@@ -553,15 +555,31 @@ def classify(
         console.print(f"[red]Cannot reach TypeSafe:[/] {escape_markup(str(e))}\nSet TYPESAFE_API_KEY (from the TypeSafe console) and rerun.")
         raise typer.Exit(2)
 
-    if review_labels:
-        _review_labels(run, report_doc, state)
+    sections_done = _review_labels(run, report_doc, state) if review_labels else True
+    if sections_done:
+        try:
+            page = classify_mod.ensure_page_proposal(run, report_doc, state, make_typesafe_client, model)
+        except TypeSafeError as e:
+            console.print(f"[red]Cannot reach TypeSafe:[/] {escape_markup(str(e))}\nSet TYPESAFE_API_KEY (from the TypeSafe console) and rerun.")
+            raise typer.Exit(2)
+        if page.status == "failed":
+            console.print(f"  page: [red]failed[/] {escape_markup(page.error or '')}")
+        else:
+            console.print("  page: " + ", ".join(f"{q} {a.label}" + (f" ({a.confidence:.2f})" if a.confidence is not None else "")
+                                              for q, a in page.answers.items()))
+        if review_labels:
+            _review_page(run, report_doc, state)
+    else:
+        console.print("[dim]Industry and scope wait until every section is decided (next session).[/]")
     path = classify_mod.export(run, report_doc, state)
     statuses = [s.decision.status if s.decision else (s.proposal.status if s.proposal else "pending") for s in state.sections.values()]
-    console.print(f"Classified report → {path}  ({', '.join(f'{statuses.count(x)} {x}' for x in sorted(set(statuses)))})")
+    page = {q: (d.label or d.status) for q, d in state.page.decisions.items()}
+    console.print(f"Classified report → {path}  (sections: {', '.join(f'{statuses.count(x)} {x}' for x in sorted(set(statuses)))}"
+                  + (f"; page: {', '.join(f'{q} {v}' for q, v in page.items())})" if page else ")"))
 
 
-def _review_labels(run: Path, report_doc: dict, state) -> None:
-    labels = list(classify_mod.LABELS)
+def _review_labels(run: Path, report_doc: dict, state) -> bool:
+    """Review undecided sections in page order. False when the reviewer quits early."""
     for i, section in enumerate(report_doc["sections"]):
         key = classify_mod.section_key(i)
         s = state.sections.get(key)
@@ -573,39 +591,78 @@ def _review_labels(run: Path, report_doc: dict, state) -> None:
         console.print(f"[bold]{escape_markup(heading or '(no heading)')}[/]")
         if preview:
             console.print(f"[dim]{escape_markup(preview)}[/]")
-        if p.status == "failed":
-            console.print(f"[red]No proposal:[/] {escape_markup(p.error or '')}")
-        elif p.source == "preprocessing":
-            console.print(f"Proposed: [bold]{p.label}[/] ({p.reason}; no request made)")
-        else:
-            ranked = sorted(p.probabilities.items(), key=lambda kv: -kv[1])
-            alts = ", ".join(f"{label} {prob:.0%}" for label, prob in ranked[1:3])
-            console.print(f"Proposed: [bold]{p.label}[/] {ranked[0][1]:.0%} (confidence {p.confidence:.2f}) · next: {alts}")
-        while True:
-            options = "[c]hoose another, [u]nresolved, [q]uit" if p.status == "failed" else "[a]ccept, [c]hoose another, [u]nresolved, [q]uit"
+        _show_proposal(p.status, p.source, p.label, p.probabilities, p.confidence, p.reason, p.error)
+        choice = _ask_decision(classify_mod.LABELS, p.label if p.status == "proposed" else None)
+        if choice is None:
+            return False
+        classify_mod.decide(run, state, key, *choice)
+        d = state.sections[key].decision
+        console.print(f"[green]Saved[/] {key}: {d.status} {d.label or ''}")
+    return True
+
+
+def _review_page(run: Path, report_doc: dict, state) -> None:
+    p = state.page.proposal
+    pending = [q for q in classify_mod.PAGE_QUESTIONS if q not in state.page.decisions]
+    if p is None or not pending:
+        return
+    console.rule("page")
+    console.print(f"[bold]{escape_markup(report_doc.get('title') or '(no title)')}[/] · {escape_markup(report_doc.get('link') or '')}")
+    if report_doc.get("description"):
+        console.print(f"[dim]{escape_markup(report_doc['description'])}[/]")
+    labels = [classify_mod.section_label(state, i) or "?" for i in range(len(report_doc["sections"]))]
+    console.print(f"[dim]Sections: {' · '.join(labels)}[/]")
+    for q in pending:
+        _, registry = classify_mod.PAGE_QUESTIONS[q]
+        console.print(f"[bold]{q}[/]")
+        a = p.answers.get(q)
+        _show_proposal(p.status, p.source, a.label if a else None, a.probabilities if a else None,
+                       a.confidence if a else None, p.reason, p.error)
+        choice = _ask_decision(registry, a.label if p.status == "proposed" and a else None)
+        if choice is None:
+            return
+        classify_mod.decide_page(run, state, q, *choice)
+        d = state.page.decisions[q]
+        console.print(f"[green]Saved[/] {q}: {d.status} {d.label or ''}")
+
+
+def _show_proposal(status, source, label, probabilities, confidence, reason, error) -> None:
+    if status == "failed":
+        console.print(f"[red]No proposal:[/] {escape_markup(error or '')}")
+    elif source == "preprocessing":
+        console.print(f"Proposed: [bold]{label}[/] ({reason}; no request made)")
+    else:
+        ranked = sorted(probabilities.items(), key=lambda kv: -kv[1])
+        alts = ", ".join(f"{name} {prob:.0%}" for name, prob in ranked[1:3])
+        console.print(f"Proposed: [bold]{label}[/] {ranked[0][1]:.0%} (confidence {confidence:.2f}) · next: {alts}")
+
+
+def _ask_decision(registry: dict, proposed: str | None) -> tuple[str, str | None] | None:
+    """Accept, choose another or leave unresolved; None when the reviewer quits."""
+    names = list(registry)
+    while True:
+        options = ("[a]ccept, " if proposed else "") + "[c]hoose another, [u]nresolved, [q]uit"
+        try:
+            answer = console.input(f"{options} > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if answer in ("q", "quit"):
+            return None
+        if answer in ("a", "accept") and proposed:
+            return "confirmed", proposed
+        if answer in ("u", "unresolved"):
+            return "unresolved", None
+        if answer in ("c", "choose"):
+            for n, name in enumerate(names, 1):
+                console.print(f"  {n:>2}. {name} — {escape_markup(registry[name]['what'])}")
             try:
-                answer = console.input(f"{options} > ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                return
-            if answer in ("q", "quit"):
-                return
-            if answer in ("a", "accept") and p.status != "failed":
-                classify_mod.decide(run, state, key, "confirmed", p.label)
-            elif answer in ("u", "unresolved"):
-                classify_mod.decide(run, state, key, "unresolved", None)
-            elif answer in ("c", "choose"):
-                for n, label in enumerate(labels, 1):
-                    console.print(f"  {n:>2}. {label} — {escape_markup(classify_mod.LABELS[label]['what'])}")
                 pick = console.input("label number or name > ").strip().lower()
-                chosen = labels[int(pick) - 1] if pick.isdigit() and 0 < int(pick) <= len(labels) else pick
-                if chosen not in classify_mod.LABELS:
-                    console.print("[red]Not a label in the registry.[/]")
-                    continue
-                classify_mod.decide(run, state, key, "confirmed", chosen)
-            else:
-                continue
-            console.print(f"[green]Saved[/] {key}: {state.sections[key].decision.status} {state.sections[key].decision.label or ''}")
-            break
+            except (EOFError, KeyboardInterrupt):
+                return None
+            chosen = names[int(pick) - 1] if pick.isdigit() and 0 < int(pick) <= len(names) else pick
+            if chosen in registry:
+                return "confirmed", chosen
+            console.print("[red]Not a label in the registry.[/]")
 
 
 def _heading_and_preview(message: list) -> tuple[str | None, str]:

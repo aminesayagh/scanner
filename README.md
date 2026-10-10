@@ -146,6 +146,17 @@ uv run section-scan classify runs/example --hide-dom-id   # evaluation: same con
   the report with a `classification` object per section.
 - **Reuse:** proposals are reused only when the input, instructions, registry and requested model all
   match. A decision made on older evidence is dropped.
+- **Page: industry and scope.** After the sections, one request asks two `Choice` questions about the
+  whole page:
+  - **`industry`:** about 20 broad sectors plus `other`/`unknown`.
+  - **`scope`:** the page type, e.g. `company_site`, `personal_portfolio`, `product_landing`,
+    `service_landing`, `online_store`, `blog_article`, `documentation`.
+
+  Its input is the domain, title, description, and each section's role, label (your confirmed label,
+  else the proposal), headings and an excerpt. Both registries are in `labels.py`
+  (`PAGE_REGISTRY_VERSION`). The page is reviewed like a section, and the export adds a top-level
+  `classification` with `industry` and `scope`. If you quit the section review, the page waits for the
+  next session, so it is judged on your final section labels.
 
 ## Section policy
 

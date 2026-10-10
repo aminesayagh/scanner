@@ -11,9 +11,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from urllib.parse import urlparse
+
 from pydantic import BaseModel
 
-from .labels import INSTRUCTIONS, INSTRUCTIONS_VERSION, LABELS, REGISTRY_VERSION
+from .labels import (
+    INDUSTRIES,
+    INDUSTRY_INSTRUCTIONS,
+    INSTRUCTIONS,
+    INSTRUCTIONS_VERSION,
+    LABELS,
+    PAGE_INSTRUCTIONS_VERSION,
+    PAGE_REGISTRY_VERSION,
+    PAGE_SCOPES,
+    REGISTRY_VERSION,
+    SCOPE_INSTRUCTIONS,
+)
+
+# Page-level questions: name -> (instructions, registry). Asked together in one request.
+PAGE_QUESTIONS = {"industry": (INDUSTRY_INSTRUCTIONS, INDUSTRIES), "scope": (SCOPE_INSTRUCTIONS, PAGE_SCOPES)}
+PAGE_BUDGET = 8000  # serialized page input before excerpts are trimmed
 
 QUESTION = "section_label"
 # Serialized size of a section's content before it is shortened (the API does not document a budget).
@@ -54,9 +71,40 @@ class SectionState(BaseModel):
     decision: Decision | None = None
 
 
+class Answer(BaseModel):
+    label: str
+    probabilities: dict[str, float] | None = None
+    confidence: float | None = None
+
+
+class PageProposal(BaseModel):
+    """Industry and scope (page type), proposed together from one request."""
+
+    key: str
+    status: Literal["proposed", "failed"]
+    source: Literal["jev", "preprocessing"]
+    answers: dict[str, Answer] = {}  # "industry", "scope"
+    model: str | None = None
+    requested_model: str | None = None
+    registry_version: str = PAGE_REGISTRY_VERSION
+    instructions_version: str = PAGE_INSTRUCTIONS_VERSION
+    reason: str | None = None
+    error: str | None = None
+    request_id: str | None = None
+    input_tokens: int | None = None
+    input_shortened: bool = False
+    at: datetime
+
+
+class PageState(BaseModel):
+    proposal: PageProposal | None = None
+    decisions: dict[str, Decision] = {}  # question -> decision
+
+
 class ClassificationState(BaseModel):
     report_sha: str
     sections: dict[str, SectionState] = {}  # section key -> state
+    page: PageState = PageState()
 
 
 # --- input ----------------------------------------------------------------------------------------------
@@ -125,12 +173,12 @@ def build_input(report: dict, index: int, hide_dom_id: bool = False) -> tuple[di
 
 
 def has_evidence(state: dict) -> bool:
-    text = json.dumps([_texts(e) for e in state["section"]["content"]], ensure_ascii=False)
-    return sum(ch.isalnum() for ch in text) >= MIN_EVIDENCE_CHARS
+    """Enough letters or digits in the section's own text (counted on the strings, not on JSON)."""
+    return sum(ch.isalnum() for t in _texts(state["section"]["content"]) for ch in t) >= MIN_EVIDENCE_CHARS
 
 
-def _texts(e):
-    return [e.get("text", "")] + [_texts(c) for c in e.get("children", [])]
+def _texts(entries) -> list[str]:
+    return [t for e in entries for t in [e.get("text", "")] + _texts(e.get("children", []))]
 
 
 def fingerprint(state: dict, requested_model: str) -> str:
@@ -219,6 +267,117 @@ def ensure_proposals(run: Path, report: dict, client_factory, model: str, hide_d
     return state
 
 
+# --- page: industry and scope -----------------------------------------------------------------------------
+
+
+def section_label(state: ClassificationState, index: int) -> str | None:
+    """The best current label of a section: the confirmed one, else Jev's or preprocessing's proposal."""
+    s = state.sections.get(section_key(index))
+    if s is None:
+        return None
+    if s.decision and s.decision.status == "confirmed":
+        return s.decision.label
+    return s.proposal.label if s.proposal and s.proposal.status == "proposed" else None
+
+
+def build_page_input(report: dict, state: ClassificationState) -> tuple[dict, bool]:
+    sections = []
+    for i, section in enumerate(report["sections"]):
+        texts = []
+
+        def walk(entries):
+            for e in entries:
+                if "text" in e:
+                    texts.append(e)
+                walk(e.get("children", []))
+
+        walk(section["message"])
+        headings = list(dict.fromkeys(e["text"] for e in texts if e["tag"] in ("h1", "h2", "h3")))[:3]
+        excerpt = " · ".join(dict.fromkeys(e["text"] for e in texts if e["text"] not in headings))
+        sections.append({
+            "order": i + 1, "layout_role": section["role"], "label": section_label(state, i),
+            "dom_id": section.get("id"), "headings": headings, "excerpt": excerpt[:300],
+        })
+    page = {
+        "page": {"domain": urlparse(report.get("link") or "").netloc or None,
+                 "title": report.get("title"), "description": report.get("description")},
+        "sections": sections,
+    }
+    shortened = False
+    for limit in (150, 60, 0):  # trim excerpts until the input fits
+        if len(json.dumps(page, ensure_ascii=False)) <= PAGE_BUDGET:
+            break
+        shortened = True
+        for sec in sections:
+            sec["excerpt"] = sec["excerpt"][:limit]
+    return page, shortened
+
+
+def page_has_evidence(page: dict) -> bool:
+    parts = [page["page"]["title"] or "", page["page"]["description"] or ""]
+    parts += [t for sec in page["sections"] for t in sec["headings"] + [sec["excerpt"]]]
+    return sum(ch.isalnum() for t in parts for ch in t) >= MIN_EVIDENCE_CHARS
+
+
+def page_fingerprint(page: dict, requested_model: str) -> str:
+    payload = json.dumps(
+        {"state": page, "questions": PAGE_QUESTIONS, "registry": PAGE_REGISTRY_VERSION, "model": requested_model},
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def propose_page(page: dict, shortened: bool, key: str, client, model: str) -> PageProposal:
+    now = datetime.now(UTC)
+    if not page_has_evidence(page):
+        return PageProposal(
+            key=key, status="proposed", source="preprocessing",
+            answers={q: Answer(label="unknown") for q in PAGE_QUESTIONS},
+            reason="insufficient_content", input_shortened=shortened, at=now,
+        )
+    from typesafe_sdk import Choice, TypeSafeError
+
+    questions = {q: Choice(instructions=instr, criteria=registry) for q, (instr, registry) in PAGE_QUESTIONS.items()}
+    try:
+        response = client.system_one(page, questions, model=model)
+        answers = {
+            q: Answer(label=a.choice, probabilities=dict(a.probabilities), confidence=a.confidence)
+            for q, a in ((q, response.choices[q]) for q in PAGE_QUESTIONS)
+        }
+    except TypeSafeError as e:
+        return PageProposal(
+            key=key, status="failed", source="jev", requested_model=model,
+            error=f"{type(e).__name__}: {e}", input_shortened=shortened, at=now,
+        )
+    return PageProposal(
+        key=key, status="proposed", source="jev", answers=answers, model=response.model,
+        requested_model=model, request_id=response.request_id, input_tokens=response.usage.input_tokens,
+        input_shortened=shortened, at=now,
+    )
+
+
+def ensure_page_proposal(run: Path, report: dict, state: ClassificationState, client_factory, model: str) -> PageProposal:
+    """Propose industry and scope from the page and its current section labels (reused when unchanged)."""
+    page, shortened = build_page_input(report, state)
+    key = page_fingerprint(page, model)
+    current = state.page
+    if current.proposal and current.proposal.key == key and current.proposal.status == "proposed":
+        return current.proposal
+    client = client_factory() if page_has_evidence(page) else None
+    proposal = propose_page(page, shortened, key, client, model)
+    kept = {q: d for q, d in current.decisions.items() if d.proposal_key == key}
+    state.page = PageState(proposal=proposal, decisions=kept)
+    save_state(run, state)
+    return proposal
+
+
+def decide_page(run: Path, state: ClassificationState, question: str, status: str, label: str | None) -> None:
+    state.page.decisions[question] = Decision(
+        proposal_key=state.page.proposal.key, status=status, label=label, at=datetime.now(UTC)
+    )
+    save_state(run, state)
+
+
 # --- decisions and export ---------------------------------------------------------------------------------
 
 
@@ -257,6 +416,36 @@ def export(run: Path, report: dict, state: ClassificationState) -> Path:
                 c["input_shortened"] = True
         section["key"] = section_key(i)
         section["classification"] = c
+    enriched["classification"] = _page_export(state.page)
     out = run / "report-classified.json"
     out.write_text(json.dumps(enriched, indent=2, ensure_ascii=False))
+    return out
+
+
+def _page_export(page: PageState) -> dict:
+    p = page.proposal
+    out = {}
+    for q in PAGE_QUESTIONS:
+        if p is None:
+            out[q] = {"status": "pending"}
+            continue
+        if p.status == "failed":
+            out[q] = {"status": "failed", "source": p.source, "error": p.error, "model": p.requested_model}
+            continue
+        a, d = p.answers[q], page.decisions.get(q)
+        c = {
+            "proposed_label": a.label,
+            "confirmed_label": d.label if d and d.status == "confirmed" else None,
+            "status": d.status if d else "pending",
+            "source": p.source,
+            "model": p.model,
+            "registry_version": p.registry_version,
+        }
+        if p.source == "jev":
+            c |= {"probabilities": a.probabilities, "confidence": a.confidence}
+        if p.reason:
+            c["reason"] = p.reason
+        if p.input_shortened:
+            c["input_shortened"] = True
+        out[q] = c
     return out

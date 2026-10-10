@@ -79,3 +79,80 @@ INSTRUCTIONS = {
     ],
     "when_unsure": "Use `other` for clear content that fits no label, and `unknown` only when the content is too thin to tell.",
 }
+
+
+# --- page level ------------------------------------------------------------------------------------------
+
+PAGE_REGISTRY_VERSION = "1"
+
+INDUSTRIES: dict[str, dict] = {
+    "software_it": {"what": "Software products, SaaS, apps, developer tools, IT services, freelance or agency software development."},
+    "marketing_creative_agency": {"what": "Marketing, advertising, branding, design or web agencies selling creative and digital services."},
+    "ecommerce_retail": {"what": "Selling consumer goods online or in shops, general retail.", "not_for": "Clothing and beauty brands (fashion_beauty)."},
+    "fashion_beauty": {"what": "Clothing, accessories, luxury fashion, cosmetics, beauty and personal care brands."},
+    "finance_insurance": {"what": "Banking, payments, fintech, investment, accounting, insurance."},
+    "health_medical": {"what": "Healthcare providers, clinics, medical devices, pharmacy, health tech."},
+    "wellness_fitness": {"what": "Gyms, sport, yoga, coaching for wellbeing, spas."},
+    "education": {"what": "Schools, universities, online courses, training, tutoring, edtech."},
+    "real_estate": {"what": "Property sale and rental, agencies, property management, real-estate development."},
+    "construction_home": {"what": "Construction, architecture, renovation, interior design, home services and trades."},
+    "hospitality_travel": {"what": "Hotels, travel agencies, tourism, airlines, restaurants as places to visit.", "not_for": "Food products and drinks brands (food_beverage)."},
+    "food_beverage": {"what": "Food and drink products, producers, delivery, catering."},
+    "legal_consulting": {"what": "Law firms, business and management consulting, recruitment, professional services.", "not_for": "Software or creative agencies."},
+    "manufacturing_industrial": {"what": "Manufacturing, industrial equipment, logistics, supply chain, B2B hardware."},
+    "automotive_transport": {"what": "Cars, mobility, transport services, vehicle dealers and repair."},
+    "media_entertainment": {"what": "News, publishing, music, film, gaming, events and entertainment."},
+    "arts_photography": {"what": "Artists, photographers, illustrators, galleries showing creative work as art.", "not_for": "Agencies selling design services to businesses (marketing_creative_agency)."},
+    "nonprofit_public": {"what": "Charities, NGOs, associations, government and public services."},
+    "energy_environment": {"what": "Energy, utilities, renewables, environmental services, agriculture."},
+    "other": {"what": "A clear industry that fits none of the above."},
+    "unknown": {"what": "Not enough evidence to tell the industry."},
+}
+
+PAGE_SCOPES: dict[str, dict] = {
+    "company_site": {
+        "what": "The site of a company or agency presenting itself and its offering: who they are, services, work, contact.",
+        "not_for": "A page promoting one specific product (product_landing); an individual's own site (personal_portfolio).",
+    },
+    "personal_portfolio": {
+        "what": "An individual's site presenting their own work, skills and experience, to win clients or jobs.",
+        "not_for": "A company or agency with a team (company_site).",
+    },
+    "product_landing": {
+        "what": "A page promoting one product, app, plugin or software tool, to get sign-ups, downloads or purchases.",
+        "not_for": "A store with many products (online_store).",
+    },
+    "service_landing": {
+        "what": "A page promoting one specific service or offer, to generate leads or bookings.",
+        "not_for": "A whole company site covering several services (company_site).",
+    },
+    "online_store": {"what": "A storefront or catalogue listing many products to buy."},
+    "product_detail": {"what": "A single product's page within a store, with price and add-to-cart."},
+    "blog_article": {"what": "An article, blog post, news story, or a list of them."},
+    "documentation": {"what": "Technical documentation, guides, API references, help center."},
+    "event": {"what": "A page for a specific event: conference, launch, webinar, wedding."},
+    "other": {"what": "A clear page type that fits none of the above."},
+    "unknown": {"what": "Not enough evidence to tell what the page is."},
+}
+
+PAGE_INSTRUCTIONS_VERSION = "1"
+
+INDUSTRY_INSTRUCTIONS = {
+    "task": "Identify the industry of the business or person behind this web page, given in `page` and `sections`.",
+    "decide": "Choose the sector the business operates in: what it sells or does for its customers, not the technology of the website.",
+    "evidence": [
+        "The title, description and section content are the main evidence.",
+        "Section labels (`sections[].label`) summarize what each section is for; the link's domain is a supporting clue.",
+    ],
+    "when_unsure": "Use `other` for a clear sector not listed, and `unknown` only when the page says too little.",
+}
+
+SCOPE_INSTRUCTIONS = {
+    "task": "Identify what kind of page this is, given in `page` and `sections`.",
+    "decide": "Choose the page type that matches its overall purpose for a visitor: what the page as a whole is built to do.",
+    "evidence": [
+        "The mix and order of sections matter: e.g. hero, services, portfolio and contact suggest a company or personal site; one product's features and pricing suggest a product landing page.",
+        "Whether the site speaks as a person (I) or a company (we) helps separate personal_portfolio from company_site.",
+    ],
+    "when_unsure": "Use `other` for a clear page type not listed, and `unknown` only when the page says too little.",
+}

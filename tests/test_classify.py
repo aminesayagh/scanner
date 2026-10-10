@@ -43,12 +43,15 @@ class FakeJev:
         text = json.dumps(body["state"]).lower()
         if self.fail_on and self.fail_on in text:
             return httpx2.Response(500, json={"detail": "upstream failure"}, headers={"x-typesafe-request-id": "req-fail"})
-        label = "faq" if "frequently" in text else "testimonials" if "people story" in text else "hero" if "we build" in text else "header"
-        labels = list(body["questions"]["section_label"]["criteria"])
-        probs = {name: (0.85 if name == label else 0.15 / (len(labels) - 1)) for name in labels}
-        answer = {"type": "choice", "choice": label, "confidence": 0.83, "probabilities": probs}
+        section = "faq" if "frequently" in text else "testimonials" if "people story" in text else "hero" if "we build" in text else "header"
+        picks = {"section_label": section, "industry": "software_it", "scope": "company_site"}
+        answers = {}
+        for name, question in body["questions"].items():  # answer every question asked, as the API does
+            labels = list(question["criteria"])
+            probs = {label: (0.85 if label == picks[name] else 0.15 / (len(labels) - 1)) for label in labels}
+            answers[name] = {"type": "choice", "choice": picks[name], "confidence": 0.83, "probabilities": probs}
         return httpx2.Response(200, json={"model": "jev-2026-09-15", "usage": {"input_tokens": 321, "output_tokens": 1},
-                                          "answers": {"section_label": answer}},
+                                          "answers": answers},
                               headers={"x-typesafe-request-id": f"req-{len(self.requests)}"})
 
 
@@ -184,3 +187,87 @@ def test_dotenv_provides_the_key_without_overriding_the_environment(tmp_path, mo
     monkeypatch.setenv("TYPESAFE_API_KEY", "from-shell")
     cli_mod.load_dotenv(env)
     assert cli_mod.os.environ["TYPESAFE_API_KEY"] == "from-shell"
+
+
+# --- page: industry and scope --------------------------------------------------------------------------------
+
+from section_scan.labels import INDUSTRIES, PAGE_REGISTRY_VERSION, PAGE_SCOPES  # noqa: E402
+
+
+def page_proposal(run, api, model="jev-latest"):
+    doc = json.loads((run / "report.json").read_text())
+    state = classify.load_state(run)
+    return classify.ensure_page_proposal(run, doc, state, lambda: client_for(api), model), state
+
+
+def test_page_is_one_request_with_industry_and_scope(run):
+    proposals(run, FakeJev())
+    api = FakeJev()
+    page, _ = page_proposal(run, api)
+    assert len(api.requests) == 1
+    questions = api.requests[0]["questions"]
+    assert list(questions) == ["industry", "scope"]
+    assert list(questions["industry"]["criteria"]) == list(INDUSTRIES) and list(questions["scope"]["criteria"]) == list(PAGE_SCOPES)
+    assert (page.answers["industry"].label, page.answers["scope"].label) == ("software_it", "company_site")
+    assert page.model == "jev-2026-09-15" and page.registry_version == PAGE_REGISTRY_VERSION
+    sent = api.requests[0]["state"]
+    assert sent["page"] == {"domain": "example.com", "title": "Example studio", "description": "Software for business."}
+    assert [s["label"] for s in sent["sections"]] == ["header", "hero", "unknown", "testimonials", "faq"]
+    assert sent["sections"][4]["headings"] == ["Frequently asked questions"]
+
+
+def test_page_uses_confirmed_section_labels_and_renews_when_they_change(run):
+    proposals(run, FakeJev())
+    api = FakeJev()
+    page_proposal(run, api)
+    classify.decide_page(run, classify.load_state(run), "industry", "confirmed", "software_it")
+    page_proposal(run, api)
+    assert len(api.requests) == 1  # unchanged: reused
+    classify.decide(run, classify.load_state(run), "section-1", "confirmed", "cta")
+    _, state = page_proposal(run, api)
+    assert len(api.requests) == 2 and api.requests[1]["state"]["sections"][1]["label"] == "cta"
+    assert state.page.decisions == {}  # decided on other evidence: dropped
+
+
+def test_page_without_evidence_is_unknown_without_a_request(tmp_path):
+    (tmp_path / "report.json").write_text(json.dumps({"link": None, "title": None, "description": None,
+                                                      "sections": [{"id": None, "role": "flow", "message": []}]}))
+    proposals(tmp_path, FakeJev())
+    api = FakeJev()
+    page, _ = page_proposal(tmp_path, api)
+    assert api.requests == [] and page.source == "preprocessing" and page.reason == "insufficient_content"
+    assert {q: a.label for q, a in page.answers.items()} == {"industry": "unknown", "scope": "unknown"}
+
+
+def test_page_failure_is_failed_not_unknown(run):
+    proposals(run, FakeJev())
+    page, state = page_proposal(run, FakeJev(fail_on="example.com"))
+    assert page.status == "failed" and page.answers == {}
+    doc = json.loads((run / "report.json").read_text())
+    exported = json.loads(classify.export(run, doc, state).read_text())["classification"]
+    assert exported["industry"]["status"] == "failed" and exported["scope"]["status"] == "failed"
+
+
+def test_cli_full_session_classifies_sections_then_page(run, monkeypatch):
+    api = FakeJev()
+    monkeypatch.setattr(cli_mod, "make_typesafe_client", lambda: client_for(api))
+    # Quit during the sections: the page waits for the next session (no request spent on it).
+    result = CliRunner().invoke(cli_mod.app, ["classify", str(run)], input="a\nq\n")
+    assert result.exit_code == 0 and "wait until every section is decided" in result.output
+    assert classify.load_state(run).page.proposal is None
+    # Next session: remaining sections, then industry (accept) and scope (choose personal_portfolio).
+    result = CliRunner().invoke(cli_mod.app, ["classify", str(run)], input="a\nu\na\na\na\nc\npersonal_portfolio\n")
+    assert result.exit_code == 0, result.output
+    page = json.loads((run / "report-classified.json").read_text())["classification"]
+    assert page["industry"]["confirmed_label"] == "software_it" and page["industry"]["status"] == "confirmed"
+    assert page["scope"]["proposed_label"] == "company_site" and page["scope"]["confirmed_label"] == "personal_portfolio"
+    assert set(page["scope"]["probabilities"]) == set(PAGE_SCOPES) and page["scope"]["source"] == "jev"
+
+
+
+def test_evidence_counts_text_not_json_syntax():
+    # Tags and JSON words such as "null" or "group" must not count as evidence.
+    empty_group = {"section": {"content": [{"tag": "group", "children": [{"tag": "text", "text": "/"}]}]}}
+    assert not classify.has_evidence(empty_group)
+    page = {"page": {"title": None, "description": None}, "sections": [{"headings": [], "excerpt": ""}]}
+    assert not classify.page_has_evidence(page)
