@@ -115,3 +115,12 @@ def test_image_without_alt_is_matched_by_source(site):
     # One alt-less image only on desktop, another only on mobile: only their sources tell them apart.
     badges = {i["src"].rsplit("/", 1)[-1]: i.get("hidden") for s in doc["sections"] for i in items(s) if "badge-" in i.get("src", "")}
     assert badges == {"badge-a.svg": ["mobile"], "badge-b.svg": ["laptop", "tablet"]}
+
+
+def test_three_breakpoint_capture_replaces_an_older_single_capture(tmp_path):
+    out = tmp_path / "page"
+    url = (FIXTURES / "responsive.html").resolve().as_uri()
+    assert cli("capture", url, "-o", out, "--width", "800", "--height", "600").exit_code == 0
+    assert (out / "manifest.json").exists()
+    assert cli("capture", url, "-o", out).exit_code == 0
+    assert not (out / "manifest.json").exists() and (out / "laptop" / "manifest.json").exists()

@@ -15,6 +15,7 @@ from rich.table import Column, Table
 from rich.tree import Tree
 
 from .capture import capture as run_capture
+from .capture import replace_outputs
 from .candidates import generate
 from .detector import detect as detect_sections
 from .evaluate import Annotation
@@ -78,8 +79,9 @@ def capture(
         targets = [(bp, output / bp, b.width, b.height, b.device) for bp, b in BREAKPOINTS.items()]
         if any((t[1] / "manifest.json").exists() for t in targets):
             console.print(f"[dim]Updating the previous capture in {output}[/]")
-        for name in ("report.json", "report-classified.json"):  # the merged reports are rebuilt from the new loads
-            (output / name).unlink(missing_ok=True)
+        # The merged reports are rebuilt from the new loads; an older single-viewport capture in the folder
+        # is replaced too, so the folder reads as one three-breakpoint capture.
+        replace_outputs(output)
     else:
         targets = [(None, output, width or 1440, height or 900, None)]
 
