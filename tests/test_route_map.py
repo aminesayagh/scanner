@@ -105,9 +105,9 @@ def test_cli_maps_an_inventory(tmp_path):
     assert {"/product/{segment_2}", "/blog/{segment_2}", "/blog/category/{segment_3}", "/search?q={q}", "/about"} <= patterns
 
 
-def test_cli_without_inventory_says_discovery_is_not_built_yet(tmp_path):
-    result = CliRunner().invoke(app, ["https://shop.test/", "-o", str(tmp_path / "m.json")])
-    assert result.exit_code == 2
+def test_cli_refuses_a_seed_that_is_not_http(tmp_path):
+    result = CliRunner().invoke(app, ["ftp://shop.test/", "-o", str(tmp_path / "m.json")])
+    assert result.exit_code != 0 and not (tmp_path / "m.json").exists()
 
 
 def test_cli_rejects_an_invalid_budget(tmp_path):

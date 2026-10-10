@@ -281,14 +281,33 @@ product pages become one route, `/product/{segment_2}`, instead of 1,000 entries
 `/about` stay on their own. It infers routes from the URLs it sees. It does not read the site's source
 router and does not prove that every value works. Its output is not an SEO XML sitemap.
 
-The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestone 1 (built)
-maps a list of URLs offline. Discovery from the seed URL alone (robots.txt, sitemaps, links), validation
-on sampled pages and page roles are the next milestones.
+The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestones 1 and 2
+are built: discovery from the seed URL and route families. Validation on sampled pages and page roles are
+the next milestones.
 
 ```bash
-uv run route-map https://shop.test/ --inventory urls.txt -o route-map.json   # or: python -m route_map ...
+uv run route-map https://shop.example/ -o route-map.json --max-html-pages 100   # or: python -m route_map ...
+uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json     # a URL list, nothing fetched
 ```
 
+- **Discovery:** the crawler (Scrapy) obeys robots.txt and reads it for `Sitemap:` declarations. If there
+  are none, it tries `/sitemap.xml` and `/sitemap_index.xml`, then relies on links.
+  - **Sitemaps:** indexes are followed recursively, gzipped files included. Limits stop runaway files:
+    a seen set (cycles), `--max-sitemap-files`, 50 MB per file after decompression, and safe XML parsing
+    (no entity expansion). **Sitemap URLs only go into the inventory**: 1,000 products listed in a sitemap
+    cost no page requests.
+  - **Pages:** HTML pages are fetched from the seed outward. Half of `--max-html-pages` goes to discovery;
+    the rest is kept for validation (milestone 4). Each free slot goes to a page whose path shape has not
+    been fetched yet, so one product page is enough to show the product family, and the budget reaches
+    the blog, pages and so on. `--max-depth` bounds how far from the seed links are followed.
+  - **Never requested:** forms, action links (logout, add to cart, delete, ...), binary assets (images,
+    PDFs, fonts, ...), other hosts (listed in `skipped_hosts`; `--include-subdomains` widens this), and
+    pages disallowed by robots.txt (`blocked_urls`).
+  - **Throttling:** requests are throttled (Scrapy AutoThrottle, at most 4 at a time), time out after 20 s
+    and are retried twice. `--deadline-seconds` (300 by default) bounds the whole discovery.
+  - **Partial maps:** a budget that runs out yields a partial map, with the reason in
+    `crawl_report.stop_reasons`. A seed page without links in its HTML is reported as a possible
+    JavaScript shell; pages are not rendered in this version.
 - **Input:** `--inventory` is a text file with one URL per line (`#` lines are skipped). URLs on another
   host than the seed, or that are not HTTP(S), are listed under `crawl_report.rejected_urls`.
 - **URL identity (conservative):** the scheme, default ports, ordinary `#anchors` and tracking parameters
@@ -306,9 +325,14 @@ uv run route-map https://shop.test/ --inventory urls.txt -o route-map.json   # o
   members include possible exceptions such as `/product/compare` until sampled pages are compared. URLs in
   no family are `individual`. Each family carries a stable sample plan (`sample_ids`, spread over different
   value shapes) for validation.
-- **Output:** versioned JSON (`schema_version`) holding `routes` (each with at most 3 `examples`), `urls`
-  (the full inventory, each with its `route_id`) and `crawl_report` (budgets, rejected URLs, limitations
-  such as hash-router URLs). Its IDs and ordering depend only on the set of URLs, not on their order.
+- **Output:** versioned JSON (`schema_version`) holding:
+  - `routes`, each with at most 3 `examples`;
+  - `urls`, the full inventory, each with its `route_id`, its discovery `sources` and any `redirect_to`;
+  - `observations`, the pages fetched, each with its status, title and links (a 200 that reads as an error
+    or a challenge page is marked `unsuitable`);
+  - `crawl_report`: budgets, requests used, sitemap results, skipped/blocked/failed URLs, stop reasons and
+    limitations. Its IDs and ordering depend only on the set of URLs, not on their order.
 - **Not yet:** one variable slot per family, so nested routes such as `/category/{a}/page/{b}` are not
-  inferred. Parameters have neutral names (`segment_2`); role-based names such as `product_slug` come with
+  inferred. On a Shopify shop, for example, `/collections/<name>/products/<slug>` gives one family per
+  collection. Parameters have neutral names (`segment_2`); role-based names such as `product_slug` come with
   page roles.

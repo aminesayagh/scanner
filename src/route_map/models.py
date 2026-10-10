@@ -21,6 +21,9 @@ class Config(BaseModel):
     max_sitemap_files: int = Field(100, ge=1)
     max_depth: int = Field(4, ge=0)
     min_distinct_values: int = Field(3, ge=2)  # before a varying segment becomes a parameter
+    max_sitemap_bytes: int = Field(50_000_000, ge=1)  # per file, after decompression (the protocol's limit)
+    deadline_seconds: int = Field(300, ge=1)  # the whole discovery
+    include_subdomains: bool = False
     tracking_parameters: list[str] = Field(default_factory=lambda: [
         "utm_*", "gclid", "dclid", "fbclid", "msclkid", "yclid", "mc_cid", "mc_eid", "_ga", "_gl",
     ])
@@ -96,6 +99,11 @@ class RouteRecord(BaseModel):
 class CrawlReport(BaseModel):
     budgets: Config
     requests_used: int = 0
+    sitemap_files: int = 0
+    sitemap_bytes: int = 0
+    discovery_html: int = 0  # page requests spent on discovery (validation gets the rest of max_html_pages)
+    skipped_hosts: list[str] = []
+    blocked_urls: list[str] = []  # disallowed by robots.txt
     discovered_urls: int = 0
     fetched_urls: int = 0
     rejected_urls: list[str] = []  # not HTTP(S), or another host
