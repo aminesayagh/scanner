@@ -24,6 +24,9 @@ class Config(BaseModel):
     max_sitemap_bytes: int = Field(50_000_000, ge=1)  # per file, after decompression (the protocol's limit)
     deadline_seconds: int = Field(300, ge=1)  # the whole discovery
     include_subdomains: bool = False
+    similarity_threshold: float = Field(0.5, gt=0, le=1)  # Jaccard overlap of main-content structure
+    min_agreeing_samples: int = Field(3, ge=1)  # before a family is validated on its sample
+    extra_samples: int = Field(3, ge=0)  # requested for a family whose samples disagree
     tracking_parameters: list[str] = Field(default_factory=lambda: [
         "utm_*", "gclid", "dclid", "fbclid", "msclkid", "yclid", "mc_cid", "mc_eid", "_ga", "_gl",
     ])
@@ -43,6 +46,10 @@ class URLRecord(BaseModel):
     redirect_to: str | None = None
     canonical: str | None = None
     route_id: str | None = None
+    # "ambiguous": its family splits into templates its URL cannot tell apart (see candidate_route_ids);
+    # "unresolved": its family's samples did not agree.
+    assignment: Literal["assigned", "ambiguous", "unresolved"] = "assigned"
+    candidate_route_ids: list[str] = []
 
 
 class PageObservation(BaseModel):
@@ -55,6 +62,9 @@ class PageObservation(BaseModel):
     structured_data_types: list[str] = []
     breadcrumbs: list[str] = []
     links: list[str] = []
+    signals: list[str] = []  # purchase, listing, article_meta, search, password, contact_form
+    main_source: Literal["main", "heuristic"] | None = None  # how the main content was found
+    canonical: str | None = None
     error: str | None = None
 
 
@@ -71,6 +81,7 @@ class RouteCandidate(BaseModel):
     member_ids: list[str]
     distinct_values: int
     sample_ids: list[str]  # the deterministic sample plan for validation
+    extra_sample_ids: list[str] = []  # next in line when the first samples disagree
 
 
 class Evidence(BaseModel):
@@ -83,12 +94,14 @@ class RouteRecord(BaseModel):
     id: str
     pattern: str
     status: RouteStatus
+    template: str | None = None  # "a", "b", ...: subgroups of one URL pattern with different templates
     role: str = "unknown"
     role_certainty: Literal["supported", "weak", "unknown"] = "unknown"
     parameters: list[Parameter] = []
     discovered_url_count: int
     successful_sample_count: int = 0
     inferred_unsampled_url_count: int = 0
+    ambiguous_url_count: int = 0  # unsampled members its pattern shares with another template
     examples: list[str] = []
     sample_ids: list[str] = []
     evidence: list[Evidence] = []
@@ -101,7 +114,8 @@ class CrawlReport(BaseModel):
     requests_used: int = 0
     sitemap_files: int = 0
     sitemap_bytes: int = 0
-    discovery_html: int = 0  # page requests spent on discovery (validation gets the rest of max_html_pages)
+    discovery_html: int = 0  # page requests spent on discovery
+    validation_html: int = 0  # page requests spent on samples (the rest of max_html_pages)
     skipped_hosts: list[str] = []
     blocked_urls: list[str] = []  # disallowed by robots.txt
     discovered_urls: int = 0

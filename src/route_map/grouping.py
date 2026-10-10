@@ -71,7 +71,7 @@ def sample_plan(members: list[tuple[str, str]], size: int) -> list[str]:
     return picked
 
 
-def candidates(records: list[dict], min_distinct: int = 3, samples: int = 5) -> list[RouteCandidate]:
+def candidates(records: list[dict], min_distinct: int = 3, samples: int = 5, extra: int = 0) -> list[RouteCandidate]:
     """Families, each URL in at most one, largest first (then the rightmost slot, then the pattern)."""
     with_host = len({r["host"] for r in records}) > 1
     groups: dict[tuple, list[tuple[str, str]]] = defaultdict(list)
@@ -106,6 +106,7 @@ def candidates(records: list[dict], min_distinct: int = 3, samples: int = 5) -> 
             parameter=parameter,
             member_ids=sorted(uid for uid, _ in members),
             distinct_values=len(values),
-            sample_ids=sample_plan(members, samples),
+            sample_ids=(plan := sample_plan(members, samples + extra))[:samples],
+            extra_sample_ids=plan[samples:],
         ))
     return out
