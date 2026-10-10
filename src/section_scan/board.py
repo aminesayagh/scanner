@@ -118,7 +118,7 @@ def _columns(target: Path) -> list[dict]:
             if not pos or pos["width"] <= 0 or pos["height"] <= 0:
                 continue  # not shown at this breakpoint
             label = (s.get("classification") or {}).get("label") or s["role"]
-            sections.append((f"{n}. {label}" + (f"  #{s['id']}" if s.get("id") else ""), pos))
+            sections.append((f"{n}. {label}", pos))
         viewport = f"{bp} · {manifest.viewport.width}×{manifest.viewport.height}" if bp else None
         columns.append({
             "bp": bp or "page",

@@ -79,9 +79,15 @@ def test_board_has_a_column_per_page_and_breakpoint_with_sections_top_to_bottom(
             label = elements[image["id"] + "-note"]
             assert label["x"] == image["x"] and label["y"] < image["y"]  # note at the section's top left
             assert scene["files"][image["fileId"]]["dataURL"].startswith("data:image/png;base64,")
-    texts = lambda prefix: " ".join(e["text"] for e in scene["elements"] if e["id"].startswith(prefix + "-s") and e["type"] == "text")  # noqa: E731
-    assert "#app" in texts("page1-mobile") and "#app" not in texts("page1-laptop")  # mobile-only section
-    assert "#gallery" in texts("page1-laptop") and "#gallery" not in texts("page1-mobile")  # hidden on mobile
+    order = {s["id"]: n for n, s in enumerate(json.loads((site / "report.json").read_text())["sections"], 1)}
+
+    def numbers(prefix):  # section numbers shown in a column ("3. flow" -> 3)
+        return {int(e["text"].split(".")[0]) for e in scene["elements"] if e["id"].startswith(prefix + "-s") and e["type"] == "text"}
+
+    assert order["app"] in numbers("page1-mobile") and order["app"] not in numbers("page1-laptop")  # mobile-only
+    assert order["gallery"] in numbers("page1-laptop") and order["gallery"] not in numbers("page1-mobile")  # hidden on mobile
+    labels = [e["text"] for e in scene["elements"] if "-s" in e["id"] and e["type"] == "text"]
+    assert labels and not any("#" in t for t in labels)  # notes carry the order and label only, no DOM id
     ordered = list(columns)
     for left_col, right_col in zip(ordered, ordered[1:]):  # columns do not overlap
         right_edge = max(e["x"] + e["width"] for e in scene["elements"] if e["id"].startswith(left_col + "-"))
@@ -100,7 +106,7 @@ def test_board_uses_classified_labels_and_page_classification(runs, tmp_path):
     out = tmp_path / "board.excalidraw"
     assert cli("board", copy, "-o", out).exit_code == 0
     texts = [e["text"] for e in json.loads(out.read_text())["elements"] if e["type"] == "text"]
-    assert any(t.endswith(". hero") or ". hero  #" in t for t in texts)
+    assert any(t.endswith(". hero") for t in texts)
     assert "industry: software_it · scope: company_site" in texts[0]  # the page note comes first
 
 
@@ -122,7 +128,8 @@ def test_each_breakpoint_column_is_cropped_from_its_own_screenshot(runs, tmp_pat
     out = tmp_path / "board.excalidraw"
     assert cli("board", site, "-o", out).exit_code == 0
     scene = json.loads(out.read_text())
-    label = next(e for e in scene["elements"] if e["id"].startswith("page0-mobile-s") and "#app" in e.get("text", ""))
+    n = next(n for n, s in enumerate(json.loads((site / "report.json").read_text())["sections"], 1) if s["id"] == "app")
+    label = next(e for e in scene["elements"] if e["id"].startswith("page0-mobile-s") and e.get("text", "").startswith(f"{n}. "))
     image = next(e for e in scene["elements"] if e["id"] == label["id"].removesuffix("-note"))
     png = base64.b64decode(scene["files"][image["fileId"]]["dataURL"].split(",", 1)[1])
     assert pixel(png, 3, 3) == [230, 230, 255]  # the mobile-only section's own background

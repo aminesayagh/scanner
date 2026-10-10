@@ -87,7 +87,7 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
     link, industry and scope once classified, and the breakpoint. A single-viewport capture has one
     column.
   - **Sections:** top to bottom in each column, each with a note at its top left (its confirmed or
-    proposed label, or its role, and `#id`). A section hidden at a breakpoint is absent from that column.
+    proposed label, or its role). A section hidden at a breakpoint is absent from that column.
   - **Which captures:** without arguments it takes the most recent capture of each page in `./runs`;
     pass folders to choose.
 
