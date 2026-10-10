@@ -1,0 +1,21 @@
+# A small shop: root pages, a product family with a compare page, a blog and its categories, a search route.
+https://shop.test/
+https://shop.test/about
+https://shop.test/contact
+https://shop.test/privacy
+https://shop.test/product/red-chair
+https://shop.test/product/blue-desk
+https://shop.test/product/green-lamp
+https://shop.test/product/oak-table-2
+https://shop.test/product/compare
+https://shop.test/blog/hello-world
+https://shop.test/blog/spring-sale
+https://shop.test/blog/new-store
+https://shop.test/blog/category/news
+https://shop.test/blog/category/offers
+https://shop.test/blog/category/guides
+https://shop.test/search?q=chair
+https://shop.test/search?q=desk
+https://shop.test/search?q=lamp&utm_source=newsletter
+https://other.test/product/elsewhere
+mailto:hello@shop.test
