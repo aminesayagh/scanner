@@ -333,10 +333,17 @@ family: their pages share a template and carry a contact form. The map took 12 r
   exactly one slot become a family once that slot takes at least 3 different values, e.g.
   `/blog/{segment_2}`, `/p/{segment_2}.html` or `/search?q={q}`. When a URL fits two candidates, a varying
   path segment wins over a query value and the rightmost segment over earlier ones (URLs vary most at their
-  end); then the larger family wins. Rules that hold:
-  - `/blog/{slug}` and `/blog/category/{slug}` are different families.
-  - Locale prefixes stay separate (`/en/product/...`, `/fr/product/...`).
-  - Root pages (`/about`, `/contact`, `/privacy`) are never folded into a catch-all `/{segment_1}`.
+  end); then the larger family wins.
+  - **Two parameters:** one-parameter families that differ only in one other path segment, at least 3 of
+    them, merge into one family. For example, `/collections/men/products/{x}`, `/collections/women/products/{x}`
+    and so on become `/collections/{segment_2}/products/{segment_4}`. URLs of the same shape left out of
+    every family (a collection with one product) join it. Samples are spread over the outer value (one per
+    collection first). Language prefixes never merge (`/en/...`, `/fr/...` stay separate), and the merged
+    pattern must keep a constant path segment.
+  - **Rules that hold:**
+    - `/blog/{slug}` and `/blog/category/{slug}` are different families.
+    - Locale prefixes stay separate (`/en/product/...`, `/fr/product/...`).
+    - Root pages (`/about`, `/contact`, `/privacy`) are never folded into a catch-all `/{segment_1}`.
 - **Validation on samples:** once discovery has nothing left to fetch, each family's planned samples are
   fetched. The plan spreads them over different value shapes (`item-12` and `compare` are different
   shapes), and families take turns so a 1,000-product family cannot use up the budget. Pages fetched
@@ -378,9 +385,12 @@ family: their pages share a template and carry a contact form. The map took 12 r
     reason is given). Two overlaps are settled on purpose: a product page with a related-products grid
     stays a product page, and a search page listing products is `search_results`. An exception split off
     a family (`/product/compare`) does not take a role from its URL words: they describe the family.
-- **Parameter names:** a parameter is renamed after its route's role only when that role is `supported`:
-  `{product_slug}` or `{product_id}`, `{article_slug}` or `{article_id}`, `{category_slug}` for listings.
-  Otherwise it keeps its neutral name (`{segment_2}`).
+- **Parameter names:** parameters are renamed only when the route's role is `supported`. Otherwise they
+  keep their neutral names (`{segment_2}`).
+  - **The last path parameter** is named after the role: `{product_slug}` or `{product_id}`,
+    `{article_slug}` or `{article_id}`, `{category_slug}` for listings.
+  - **An earlier one** is named after the word before it: `{category_slug}` after `/collections/` or
+    `/category/`, as in `/collections/{category_slug}/products/{product_slug}`.
 - **Output:** versioned JSON (`schema_version`) holding:
   - `routes`, each with at most 3 `examples`;
   - `urls`: the full inventory, each with its `route_id` (or `assignment: "ambiguous"` / `"unresolved"`),
@@ -397,9 +407,9 @@ family: their pages share a template and carry a contact form. The map took 12 r
 - **Summary:** `--summary FILE` also writes a Markdown table of the routes (status, role, URL and sample
   counts, examples), their exceptions, and why the map is partial if it is. Its IDs and ordering depend only on the set of URLs, not on their order.
 - **Limits (heuristics, see also `notice.md`):**
-  - **One variable slot per family:** nested routes such as `/category/{a}/page/{b}` are not inferred. On a
-    Shopify shop, `/collections/<name>/products/<slug>` gives one family per collection, which also
-    spreads the sample budget thin.
+  - **At most two parameters per family:** a second one comes only from merging sibling families
+    (below), and three or more are not inferred. A sibling family with fewer than 3 members stays apart
+    unless its URLs fit a merged family.
   - **No rendering:** pages are read as served HTML. A JavaScript shell (a seed page without links) is
     reported, not rendered, and hash-router URLs are flagged, not followed.
   - **Word lists:** action links are skipped by URL words, so `/product/remove-tool` would be skipped too.
