@@ -145,7 +145,8 @@ def assign_roles(routes: list[RouteRecord], records: list[URLRecord], observatio
         if partial:
             share, role = partial[-1]
             return role, "weak", [Evidence(kind="role", value=f"{role}: partial page cues", sample_support=f"{round(share * n)}/{n}")]
-        if word:
+        if word and not any(e.kind == "exception" for e in route.evidence):
+            # An exception's URL words describe the family it left (/product/compare), not the page itself.
             return word, "weak", [Evidence(kind="role", value=f"{word}: URL words only")]
         return "unknown", "unknown", []
 

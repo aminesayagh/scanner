@@ -1,68 +1,9 @@
 import gzip
-import http.server
-import json
-import subprocess
-import sys
-import threading
 
 import pytest
 
 from route_map.discovery import SitemapError, is_action, is_asset, read_sitemap, robots_sitemaps
-
-URLSET = '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{}</urlset>'
-INDEX = '<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{}</sitemapindex>'
-
-
-def urlset(base, paths):
-    return URLSET.format("".join(f"<url><loc>{base}{p}</loc></url>" for p in paths))
-
-
-def index(base, paths):
-    return INDEX.format("".join(f"<sitemap><loc>{base}{p}</loc></sitemap>" for p in paths))
-
-
-def html(title, links):
-    return f"<html><head><title>{title}</title></head><body>" + "".join(f'<a href="{h}">{h}</a>' for h in links) + "</body></html>"
-
-
-class Site:
-    """A local site: `routes(base)` returns {path: (content type, body)}; every requested path is logged."""
-
-    def __init__(self, routes):
-        self.requested = []
-        site = self
-
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                site.requested.append(self.path)
-                found = site.pages.get(self.path)
-                if found is None:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-                kind, body = found
-                body = body.encode() if isinstance(body, str) else body
-                self.send_response(200)
-                self.send_header("Content-Type", kind)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *args):
-                pass
-
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.base = f"http://127.0.0.1:{self.server.server_port}"
-        self.pages = routes(self.base)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def map(self, tmp_path, *args):
-        out = tmp_path / "map.json"
-        # One crawl per process: Scrapy's event loop cannot be restarted inside one.
-        done = subprocess.run([sys.executable, "-m", "route_map", self.base + "/", "-o", str(out), *args],
-                              capture_output=True, text=True, timeout=120)
-        assert done.returncode == 0, done.stderr
-        return json.loads(out.read_text())
+from route_site import URLSET, Site, html, index, urlset
 
 
 @pytest.fixture

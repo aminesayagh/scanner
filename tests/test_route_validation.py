@@ -6,7 +6,7 @@ from route_map.inference import infer
 from route_map.models import Config, PageObservation
 from route_map.normalization import normalize, url_id
 
-from test_route_discovery import Site, html
+from route_site import Site, html
 
 PRODUCT = """<html><head><title>{name}</title><script type="application/ld+json">
 {{"@context": "https://schema.org", "@type": "Product", "name": "{name}", "offers": {{"@type": "Offer", "price": "{price}"}}}}

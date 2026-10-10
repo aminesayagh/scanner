@@ -99,3 +99,45 @@ FAQ → call-to-action boundary from gaps-only (1 missed, 1 false split). Settin
 - **Annotator.** The real-page annotations were made by Claude from the screenshots; a person should
   verify them.
 - **Acceptance targets.** Choose them from these recorded baselines, not in advance, as the plan says.
+
+## route-map
+
+Results recorded 10 October 2026 on a local shop whose families and roles are known
+(`evaluation/route_map_eval.py`). The shop has:
+
+- 300 product pages and an exception, `/product/compare`;
+- 8 collections that list products;
+- 20 blog posts and 4 blog categories;
+- search pages;
+- single pages: home, about, privacy, contact, cart and login.
+
+Each budget is crawled twice, with the same site answering in a different random order.
+
+```bash
+uv run python evaluation/route_map_eval.py
+```
+
+| Budget | Pages used | Validated families | Pages per validated family | Precision | Recall | False merges | False splits | Singletons kept | Supported roles right | Weak / unknown routes | Coverage | Same map twice |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 20 | 20 | 4 | 5.0 | 1.000 | 1.000 | 0 | 0 | 8/8 | 8/8 | 3/1 | 99% | yes |
+| 50 | 33 | 4 | 8.2 | 1.000 | 1.000 | 0 | 0 | 8/8 | 9/9 | 2/1 | 99% | yes |
+| 100 | 56 | 4 | 14.0 | 1.000 | 1.000 | 0 | 0 | 8/8 | 9/9 | 2/1 | 99% | yes |
+
+- **Precision / recall:** computed over pairs of discovered URLs, "same route" against "same true family".
+  An ambiguous URL counts as its own group.
+- **False merges / splits:** a merge is a route holding URLs of two true families; a split is a true
+  family spread over several routes.
+- **Singletons kept:** one-page families (including `/product/compare`) that ended up as individual
+  routes.
+- **Roles:** supported roles are checked against the true role. The weak routes are `/about`,
+  `/privacy` and `/checkout`, from URL words; the unknown one is `/product/compare`, whose URL words
+  belong to the family it left.
+- **Coverage:** 99% because two of the three search pages are linked from nowhere.
+
+**Reading these numbers:** this shop's templates are written for the test, so perfect scores show the
+pipeline holds together, not that real sites are this clean. Live checks:
+
+- **hordestudio.com:** the one-variable limit splits `/collections/<name>/products/<slug>` into one family
+  per collection, so a 60-page budget leaves most of them provisional. The roles found were right:
+  product detail, product listing, home, cart and login.
+- **masayagh.com:** 8 URLs, with `/contact/?service={service}` validated as a contact family.

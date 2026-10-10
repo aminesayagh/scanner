@@ -3,8 +3,9 @@ value) become one family once that slot takes at least `min_distinct_values` dif
 
 URLs are partitioned by host, path depth, trailing slash, extension and query keys, so /blog/{slug} and
 /blog/category/{slug} never meet. Within a partition, the URLs that agree on every slot but one are siblings
-of a trie node; their varying slot is the parameter. Each URL ends in at most one family: the largest
-candidates claim their members first. A path parameter needs a constant path segment beside it, so root
+of a trie node; their varying slot is the parameter. Each URL ends in at most one family: candidates claim
+their members in order: a varying path segment before a query value, the rightmost segment first, then the
+larger family. A path parameter needs a constant path segment beside it, so root
 pages such as /about, /contact and /privacy are never folded into a catch-all /{segment_1}.
 # ponytail: one variable slot per family; nested families (/category/{a}/page/{b}) come after validation.
 """
@@ -72,7 +73,7 @@ def sample_plan(members: list[tuple[str, str]], size: int) -> list[str]:
 
 
 def candidates(records: list[dict], min_distinct: int = 3, samples: int = 5, extra: int = 0) -> list[RouteCandidate]:
-    """Families, each URL in at most one, largest first (then the rightmost slot, then the pattern)."""
+    """Families, each URL in at most one (path before query, rightmost slot first, then the larger family)."""
     with_host = len({r["host"] for r in records}) > 1
     groups: dict[tuple, list[tuple[str, str]]] = defaultdict(list)
     for r in records:
@@ -87,7 +88,9 @@ def candidates(records: list[dict], min_distinct: int = 3, samples: int = 5, ext
     for (key, i, template), members in groups.items():
         if len({v for _, v in members}) >= min_distinct:
             proposals.append((key, i, template, members))
-    proposals.sort(key=lambda p: (-len(p[3]), -p[1], pattern_of(p[0], p[2], p[1], "x", with_host)))
+    # Path before query, the rightmost segment first (URLs vary most at their end), then the larger family:
+    # /s1/{segment_2} beats /{segment_1}/p1 even when more URLs share p1.
+    proposals.sort(key=lambda p: (p[1] >= p[0][1], -p[1], -len(p[3]), pattern_of(p[0], p[2], p[1], "x", with_host)))
     claimed, out = set(), []
     for key, i, template, members in proposals:
         members = [(uid, v) for uid, v in members if uid not in claimed]
