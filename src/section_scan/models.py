@@ -69,6 +69,7 @@ class Manifest(BaseModel):
     readiness: Readiness
     scroll: ScrollPass | None = None
     screenshot: Screenshot | None = None
+    snapshot: str | None = None  # offline MHTML copy of the page as captured; absent before extractor 9
 
 
 class Rect(BaseModel):

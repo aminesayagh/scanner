@@ -13,8 +13,10 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from . import review as review_mod
 from .breakpoints import site_runs
-from .models import Manifest
+from .models import ElementSnapshot, Manifest, ProposalSnapshot
+from .report import section_rows
 
 DISPLAY_SCALE = 0.5  # board size of a section relative to its CSS size
 GAP_X, GAP_BREAKPOINT, GAP_Y = 400, 100, 60  # between pages, between a page's breakpoints, between sections
@@ -34,6 +36,16 @@ _CROP = """([rects, scale]) => {
 }"""
 
 
+_HIDE = """(css) => {
+  document.getElementById('ss-hide')?.remove();
+  if (css === null) return;
+  const style = document.createElement('style');
+  style.id = 'ss-hide';
+  style.textContent = css;
+  document.documentElement.append(style);
+}"""
+
+
 class Cropper:
     """One browser for many crops of saved screenshots."""
 
@@ -46,6 +58,37 @@ class Cropper:
     def __exit__(self, *exc):
         self._browser.close()
         self._pw.stop()
+
+    def isolated(self, run: Path, manifest: Manifest, clips: list[dict], hide: list[list[str]]) -> list[bytes | None]:
+        """Screenshots of each clip (CSS px) from the page's offline copy, with the elements in `hide[i]`
+        (element ids) made transparent first: whatever covers section i, but not section i itself.
+
+        The copy opens at the captured size and device. Chrome's snapshot keeps no scripts, so the page
+        cannot change or randomize itself; hiding by opacity keeps every box where it was.
+        """
+        emulation = {}
+        if manifest.device:
+            d = self._pw.devices[manifest.device]
+            emulation = {"user_agent": d["user_agent"], "is_mobile": d["is_mobile"], "has_touch": d["has_touch"]}
+        context = self._browser.new_context(
+            viewport={"width": manifest.viewport.width, "height": manifest.viewport.height},
+            # JavaScript stays on for Playwright's own calls; the snapshot holds no page scripts to run.
+            device_scale_factor=manifest.device_scale_factor, **emulation,
+        )
+        page = context.new_page()
+        page.goto((run / manifest.snapshot).resolve().as_uri(), wait_until="load")
+        shots = []
+        for clip, ids in zip(clips, hide):
+            if clip["width"] < 1 or clip["height"] < 1:
+                shots.append(None)
+                continue
+            rule = ",".join(f'[data-ss-id="{i}"]' for i in ids)
+            # Inserted directly: Playwright's add_style_tag waits for a load event an MHTML page never fires.
+            page.evaluate(_HIDE, f"{rule} {{ opacity: 0 !important; }}" if ids else "")
+            shots.append(page.screenshot(clip=clip, full_page=True, animations="disabled"))
+            page.evaluate(_HIDE, None)
+        context.close()
+        return shots
 
     def crop(self, png: bytes, rects: list[tuple[float, float, float, float]], scale: float = 1.0) -> list[bytes | None]:
         """Crops of `png` (rects in screenshot pixels), resized by `scale`; None for an empty crop."""
@@ -60,12 +103,20 @@ def _slug(text: str) -> str:
 
 
 def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
-    """RUN/sections/NN-<id or role>.png: one full-resolution screenshot per section of report.json."""
+    """RUN/sections/NN-<id or role>.png: one full-resolution screenshot per section of report.json.
+
+    With the page's offline copy (captures since extractor 9), every other section and floating element
+    that covers a section is hidden before its screenshot; older captures are cropped from screenshot.png.
+    """
     manifest = Manifest.model_validate_json((run / "manifest.json").read_text())
     report = json.loads((run / "report.json").read_text())
-    dsf = manifest.device_scale_factor
-    rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for p in (s["position"] for s in report["sections"])]
-    crops = cropper.crop((run / manifest.screenshot.path).read_bytes(), rects)
+    positions = [s["position"] for s in report["sections"]]
+    if manifest.snapshot and (run / manifest.snapshot).exists():
+        crops = cropper.isolated(run, manifest, positions, _covering(run, len(positions)))
+    else:
+        dsf = manifest.device_scale_factor
+        rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for p in positions]
+        crops = cropper.crop((run / manifest.screenshot.path).read_bytes(), rects)
     folder = run / "sections"
     if folder.is_dir():
         for old in folder.glob("*.png"):
@@ -79,6 +130,36 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
         path.write_bytes(png)
         written.append(path)
     return written
+
+
+def _covering(run: Path, count: int) -> list[list[str]]:
+    """For each section of report.json (same order), the elements to hide: the top elements of every other
+    section, except those that contain this section (hiding a wrapper would hide the section with it).
+    """
+    props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
+    review = review_mod.load(run)
+    if review is not None and review.proposal_revision != review_mod.proposal_revision(run):
+        review = None
+    rows, members = section_rows(props, review)
+    rows = sorted((r for r in rows if r[3] != "excluded"), key=lambda r: r[4].y)
+    parent = {e.id: e.parent_id for e in ElementSnapshot.model_validate_json((run / "elements.json").read_text()).elements}
+
+    def tops(ids):
+        own = set(ids)
+        return [e for e in ids if parent.get(e) not in own]
+
+    def ancestors(eid):
+        out = set()
+        while (eid := parent.get(eid)) is not None:
+            out.add(eid)
+        return out
+
+    roots = [tops(members[r[0]]) for r in rows]
+    hide = []
+    for i in range(min(count, len(rows))):
+        around = set().union(*(ancestors(e) for e in roots[i])) if roots[i] else set()
+        hide.append([e for j, rs in enumerate(roots) if j != i for e in rs if e not in around])
+    return hide + [[] for _ in range(count - len(hide))]
 
 
 # --- board ---------------------------------------------------------------------------------------------
@@ -121,6 +202,7 @@ def _columns(target: Path) -> list[dict]:
             sections.append((f"{n}. {label}", pos))
         viewport = f"{bp} · {manifest.viewport.width}×{manifest.viewport.height}" if bp else None
         columns.append({
+            "shots": _saved_shots(run),
             "bp": bp or "page",
             "note": "\n".join(line for line in lines + [viewport] if line),
             "screenshot": run / manifest.screenshot.path,
@@ -128,6 +210,20 @@ def _columns(target: Path) -> list[dict]:
             "sections": sections,
         })
     return columns
+
+
+def _key(pos: dict) -> tuple:
+    return tuple(round(pos[k]) for k in ("x", "y", "width", "height"))
+
+
+def _saved_shots(run: Path) -> dict[tuple, Path]:
+    """The run's section screenshots (RUN/sections), keyed by their section's position."""
+    folder, report_path = run / "sections", run / "report.json"
+    if not folder.is_dir() or not report_path.exists():
+        return {}
+    files = {int(f.name.split("-", 1)[0]): f for f in folder.glob("*.png") if f.name.split("-", 1)[0].isdigit()}
+    report = json.loads(report_path.read_text())
+    return {_key(s["position"]): files[i] for i, s in enumerate(report["sections"]) if i in files}
 
 
 def _base(kind: str, id_: str, x: float, y: float, w: float, h: float) -> dict:
@@ -170,8 +266,16 @@ def build_board(targets: list[Path], cropper: Cropper) -> dict:
             elements.append(note)
             y = note["height"] + 40
             dsf = column["dsf"]
-            rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for _, p in column["sections"]]
-            crops = cropper.crop(column["screenshot"].read_bytes(), rects, DISPLAY_SCALE / dsf)
+            crops = []
+            for _, p in column["sections"]:
+                # The section's own screenshot (covering elements hidden) when saved; else a crop of the page.
+                if shot := column["shots"].get(_key(p)):
+                    png = shot.read_bytes()
+                    size = (round(p["width"] * dsf), round(p["height"] * dsf))
+                    crops += cropper.crop(png, [(0, 0, *size)], DISPLAY_SCALE / dsf)
+                else:
+                    rect = (p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf)
+                    crops += cropper.crop(column["screenshot"].read_bytes(), [rect], DISPLAY_SCALE / dsf)
             widest = note["width"]
             for i, ((label, pos), png) in enumerate(zip(column["sections"], crops)):
                 if png is None:

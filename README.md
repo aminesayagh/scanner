@@ -79,7 +79,13 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
 
 - **Section screenshots:** `report` also saves one screenshot per section in `RUN/sections/`
   (`NN-<id or role>.png`, full resolution). For a three-breakpoint capture, each breakpoint folder gets
-  its own. They are cropped from the saved screenshot, so the site is not visited again.
+  its own.
+  - **How they are taken:** `capture` saves an offline copy of the page (`page.mhtml`: Chrome's snapshot of
+    the DOM with styles, images and fonts, and no scripts). Each section is then screenshotted from that
+    copy with **every other section and floating element made transparent**, so cookie banners, sticky
+    bars or a neighbouring section pulled up over it do not cover it. Nothing reflows, and the site is
+    not visited again.
+  - **Older captures:** captures without the copy fall back to cropping `screenshot.png`.
 - **The board:** `section-scan board` writes `boards/sections.excalidraw`, one Excalidraw file for every
   page.
   - **Columns:** pages left to right, each shown three times side by side (laptop, tablet, mobile), every

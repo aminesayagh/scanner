@@ -157,6 +157,8 @@
     if (cs.display === 'none') return null; // not rendered, nor is anything inside it
 
     const node = { id: 'e' + out.length, parent_id: parentId, child_ids: [], tag };
+    // Tag the live node with its element id, so the saved offline copy knows which node is which element.
+    el.setAttribute('data-ss-id', node.id);
     out.push(node);
 
     const contents = cs.display === 'contents';
@@ -252,6 +254,8 @@
     return node.id;
   }
 
+  // A retry extracts again: clear earlier tags so no stale id survives on a node not extracted this time.
+  document.querySelectorAll('[data-ss-id]').forEach((n) => n.removeAttribute('data-ss-id'));
   visit(document.body, null,
     { fixed: false, sticky: false, transparent: false, collapsed: false, inScroller: false, clippedAway: false });
   return {

@@ -133,3 +133,51 @@ def test_each_breakpoint_column_is_cropped_from_its_own_screenshot(runs, tmp_pat
     image = next(e for e in scene["elements"] if e["id"] == label["id"].removesuffix("-note"))
     png = base64.b64decode(scene["files"][image["fileId"]]["dataURL"].split(",", 1)[1])
     assert pixel(png, 3, 3) == [230, 230, 255]  # the mobile-only section's own background
+
+
+
+@pytest.fixture(scope="module")
+def covered(tmp_path_factory):
+    out = tmp_path_factory.mktemp("covered") / "run"
+    url = (FIXTURES / "covered.html").resolve().as_uri()
+    assert cli("capture", url, "-o", out, "--width", "1000", "--height", "700").exit_code == 0
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    report = json.loads((out / "report.json").read_text())
+    index = next(i for i, s in enumerate(report["sections"]) if "First section" in json.dumps(s["message"]))
+    assert report["sections"][index]["position"]["y"] == 0 and report["sections"][index]["position"]["height"] == 480
+    return out, index
+
+
+def first_shot(run, index):
+    return next((run / "sections").glob(f"{index:02d}-*.png")).read_bytes()
+
+
+def test_section_screenshot_hides_sections_and_floating_elements_covering_it(covered):
+    run, index = covered
+    png = first_shot(run, index)
+    assert pixel(png, 10, 340) == [200, 30, 30]  # under the fixed cookie bar (green in the page screenshot)
+    assert pixel(png, 10, 440) == [200, 30, 30]  # under the section pulled up over it (blue in the page screenshot)
+    page = (run / "screenshot.png").read_bytes()
+    assert pixel(page, 10, 340) == [30, 160, 60] and pixel(page, 10, 440) == [30, 30, 200]  # what was covering it
+
+
+def test_board_uses_the_clean_section_screenshot(covered, tmp_path):
+    run, index = covered
+    out = tmp_path / "board.excalidraw"
+    assert cli("board", run, "-o", out).exit_code == 0
+    scene = json.loads(out.read_text())
+    image = next(e for e in scene["elements"] if e["id"] == f"page0-page-s{index}")
+    png = base64.b64decode(scene["files"][image["fileId"]]["dataURL"].split(",", 1)[1])
+    assert pixel(png, 5, 220) == [200, 30, 30]  # half size: y 440 of the section, still the section's own red
+
+
+def test_captures_without_an_offline_copy_fall_back_to_cropping(covered, tmp_path):
+    run, index = covered
+    old = tmp_path / "old"
+    shutil.copytree(run, old)
+    (old / "page.mhtml").unlink()
+    manifest = json.loads((old / "manifest.json").read_text())
+    manifest["snapshot"] = None  # as captured before extractor 9
+    (old / "manifest.json").write_text(json.dumps(manifest))
+    assert cli("report", old).exit_code == 0
+    assert pixel(first_shot(old, index), 10, 440) == [30, 30, 200]  # a plain crop keeps what covered it
