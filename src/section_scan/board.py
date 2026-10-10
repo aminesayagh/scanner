@@ -1,4 +1,4 @@
-"""Section screenshots and the Excalidraw board of all pages (one row per page, sections left to right).
+"""Section screenshots and the Excalidraw board of all pages (one column per page, sections top to bottom).
 
 Everything is cropped from the saved screenshots: no site is visited. Cropping uses a canvas in the
 Playwright browser already used for capture, so no image library is needed.
@@ -16,7 +16,7 @@ from .breakpoints import site_runs
 from .models import Manifest
 
 DISPLAY_SCALE = 0.5  # board size of a section relative to its CSS size
-GAP_X, GAP_Y = 80, 160  # between sections in a row, between rows
+GAP_X, GAP_Y = 200, 60  # between page columns, between sections in a column
 NOTE_SIZE, ROW_NOTE_SIZE = 20, 28
 
 _CROP = """([rects, scale]) => {
@@ -97,7 +97,7 @@ def latest_per_page(targets) -> list[Path]:
 
 
 def _row(target: Path) -> dict:
-    """A page's row: its note, screenshot and sections (laptop layout for three-breakpoint captures)."""
+    """A page's column: its note, screenshot and sections (laptop layout for three-breakpoint captures)."""
     runs = site_runs(target)
     if runs:
         bp = "laptop" if "laptop" in runs else next(iter(runs))
@@ -155,18 +155,19 @@ def _image(id_: str, x: float, y: float, w: float, h: float, file_id: str) -> di
 
 
 def build_board(targets: list[Path], cropper: Cropper) -> dict:
-    """An Excalidraw scene: one row per page (top to bottom), its sections left to right, notes top left."""
+    """An Excalidraw scene: one column per page (left to right), its sections top to bottom, notes top left."""
     elements, files = [], {}
-    top = 0.0
-    for r, target in enumerate(targets):
-        row = _row(target)
-        elements.append(_text(f"row{r}-note", 0, top, row["note"], ROW_NOTE_SIZE))
-        y = top + row["note"].count("\n") * ROW_NOTE_SIZE * 1.25 + ROW_NOTE_SIZE * 1.25 + 40
-        dsf = row["dsf"]
-        rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for _, p in row["sections"]]
-        crops = cropper.crop(row["screenshot"].read_bytes(), rects, DISPLAY_SCALE / dsf)
-        x, tallest = 0.0, 0.0
-        for i, ((note, pos), png) in enumerate(zip(row["sections"], crops)):
+    left = 0.0
+    for c, target in enumerate(targets):
+        page = _row(target)
+        note = _text(f"page{c}-note", left, 0, page["note"], ROW_NOTE_SIZE)
+        elements.append(note)
+        y = note["height"] + 40
+        dsf = page["dsf"]
+        rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for _, p in page["sections"]]
+        crops = cropper.crop(page["screenshot"].read_bytes(), rects, DISPLAY_SCALE / dsf)
+        widest = note["width"]
+        for i, ((label, pos), png) in enumerate(zip(page["sections"], crops)):
             if png is None:
                 continue
             file_id = hashlib.sha256(png).hexdigest()[:40]
@@ -175,11 +176,11 @@ def build_board(targets: list[Path], cropper: Cropper) -> dict:
                 "dataURL": "data:image/png;base64," + base64.b64encode(png).decode(),
             }
             w, h = pos["width"] * DISPLAY_SCALE, pos["height"] * DISPLAY_SCALE
-            elements.append(_text(f"row{r}-s{i}-note", x, y, note, NOTE_SIZE))
-            elements.append(_image(f"row{r}-s{i}", x, y + NOTE_SIZE * 1.25 + 8, w, h, file_id))
-            x += w + GAP_X
-            tallest = max(tallest, h)
-        top = y + NOTE_SIZE * 1.25 + 8 + tallest + GAP_Y
+            elements.append(_text(f"page{c}-s{i}-note", left, y, label, NOTE_SIZE))
+            elements.append(_image(f"page{c}-s{i}", left, y + NOTE_SIZE * 1.25 + 8, w, h, file_id))
+            y += NOTE_SIZE * 1.25 + 8 + h + GAP_Y
+            widest = max(widest, w)
+        left += widest + GAP_X
     return {
         "type": "excalidraw", "version": 2, "source": "section-scan",
         "elements": elements, "appState": {"viewBackgroundColor": "#ffffff", "gridSize": None}, "files": files,

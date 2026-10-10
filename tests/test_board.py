@@ -53,7 +53,7 @@ def test_report_saves_one_screenshot_per_section(runs):
     assert all((site / bp / "sections").is_dir() for bp in ("laptop", "tablet", "mobile"))
 
 
-def test_board_has_a_row_per_page_and_sections_left_to_right(runs, tmp_path):
+def test_board_has_a_column_per_page_and_sections_top_to_bottom(runs, tmp_path):
     root, single, site = runs
     out = tmp_path / "board.excalidraw"
     result = cli("board", single, site, "-o", out)
@@ -62,21 +62,23 @@ def test_board_has_a_row_per_page_and_sections_left_to_right(runs, tmp_path):
     assert scene["type"] == "excalidraw" and scene["version"] == 2
     elements = {e["id"]: e for e in scene["elements"]}
     notes = [e for e in scene["elements"] if e["id"].endswith("-note") and "-s" not in e["id"]]
-    assert [n["id"] for n in notes] == ["row0-note", "row1-note"] and notes[0]["y"] < notes[1]["y"]
+    assert [n["id"] for n in notes] == ["page0-note", "page1-note"] and notes[0]["x"] < notes[1]["x"]  # pages left to right
+    assert notes[0]["y"] == notes[1]["y"]  # page notes on one line, at the top
     assert "Candidates (landmarks)" in notes[0]["text"] and "Responsive" in notes[1]["text"]
-    for r in (0, 1):
-        images = [e for e in scene["elements"] if e["type"] == "image" and e["id"].startswith(f"row{r}-")]
-        xs = [i["x"] for i in images]
-        assert images and all(a < b for a, b in zip(xs, xs[1:]))  # strictly left to right
-        assert len({i["y"] for i in images}) == 1 and images[0]["y"] > notes[r]["y"]  # one row, below its note
+    for c in (0, 1):
+        images = [e for e in scene["elements"] if e["type"] == "image" and e["id"].startswith(f"page{c}-")]
+        ys = [i["y"] for i in images]
+        assert images and all(a < b for a, b in zip(ys, ys[1:]))  # strictly top to bottom
+        assert len({i["x"] for i in images}) == 1 and images[0]["x"] == notes[c]["x"]  # one column, under its note
+        assert all(a["y"] + a["height"] < b["y"] for a, b in zip(images, images[1:]))  # sections do not overlap
         for image in images:
             note = elements[image["id"] + "-note"]
             assert note["x"] == image["x"] and note["y"] < image["y"]  # note at the section's top left
             assert scene["files"][image["fileId"]]["dataURL"].startswith("data:image/png;base64,")
-    row1 = [e for e in scene["elements"] if e["id"].startswith("row1-s") and e["type"] == "text"]
-    assert not any("#app" in e["text"] for e in row1)  # the mobile-only section is not in the laptop row
-    assert all(e["y"] > max(i["y"] + i["height"] for i in scene["elements"] if i["id"].startswith("row0-s") and i["type"] == "image")
-               for e in scene["elements"] if e["id"].startswith("row1-"))  # rows do not overlap
+    col1 = [e for e in scene["elements"] if e["id"].startswith("page1-s") and e["type"] == "text"]
+    assert not any("#app" in e["text"] for e in col1)  # the mobile-only section is not in the laptop column
+    right_of_col0 = max(e["x"] + e["width"] for e in scene["elements"] if e["id"].startswith("page0-"))
+    assert all(e["x"] > right_of_col0 for e in scene["elements"] if e["id"].startswith("page1-"))  # columns do not overlap
 
 
 def test_board_uses_classified_labels_and_page_classification(runs, tmp_path):
@@ -92,7 +94,7 @@ def test_board_uses_classified_labels_and_page_classification(runs, tmp_path):
     assert cli("board", copy, "-o", out).exit_code == 0
     texts = [e["text"] for e in json.loads(out.read_text())["elements"] if e["type"] == "text"]
     assert any(t.endswith(". hero") or ". hero  #" in t for t in texts)
-    assert "industry: software_it · scope: company_site" in texts[0]
+    assert "industry: software_it · scope: company_site" in texts[0]  # the page note comes first
 
 
 def test_board_default_collects_each_page_once_from_runs(runs, tmp_path, monkeypatch):
