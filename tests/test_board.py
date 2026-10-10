@@ -219,3 +219,12 @@ def test_section_is_framed_where_the_offline_copy_lays_it_out(tmp_path):
     assert report["sections"][green]["position"]["y"] == 500  # pushed down by the script at capture
     assert pixel(first_shot(out, green), 10, 10) == [20, 120, 20]
     assert pixel(first_shot(out, green), 10, 330) == [20, 120, 20]  # its bottom edge, not the purple below
+
+
+
+def test_stacking_context_of_an_ancestor_decides_what_is_in_front(covered):
+    run, _ = covered
+    report = json.loads((run / "report.json").read_text())
+    back = next(i for i, s in enumerate(report["sections"]) if "Back section" in json.dumps(s["message"]))
+    # The front section is static, but its wrapper (z-index 10) paints it over the back section (z-index 0).
+    assert pixel(first_shot(run, back), 600, 20) == [20, 150, 150]  # hidden: the back section's own colour

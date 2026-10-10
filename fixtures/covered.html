@@ -11,6 +11,12 @@
   /* A section designed to sit on the one before it: white text, no background of its own. */
   #base { position: relative; height: 300px; background: rgb(20, 30, 90); }
   #over { position: relative; margin-top: -300px; height: 300px; padding: 40px; color: white; }
+  /* Static sections inside a z-index: 10 wrapper (holding two sections, so part of neither) paint over a
+     later z-index: 0 section they overlap. */
+  #layer { position: relative; z-index: 10; }
+  #front-top { height: 200px; background: rgb(250, 250, 200); }
+  #front { height: 300px; background: rgb(240, 140, 20); }
+  #back { position: relative; z-index: 0; margin-top: -150px; height: 300px; padding: 40px; background: rgb(20, 150, 150); }
   #cookie { position: fixed; left: 0; right: 0; top: 300px; height: 80px; background: rgb(30, 160, 60); }
 </style></head>
 <body>
@@ -19,5 +25,7 @@
 <section id="third"><h2>Third section</h2><p>Plain</p></section>
 <section id="base"><h2>Base section</h2></section>
 <section id="over"><h2>Over section</h2><p>White text on the base</p></section>
+<div id="layer"><section id="front-top"><h2>Front top section</h2></section><section id="front"><h2>Front section</h2></section></div>
+<section id="back"><h2>Back section</h2><p>Partly under the front</p></section>
 <div id="cookie"><p>We use cookies</p><button>OK</button></div>
 </body></html>

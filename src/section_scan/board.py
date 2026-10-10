@@ -169,22 +169,45 @@ def _covering(run: Path, count: int) -> list[tuple[list[str], list[str]]]:
             out.add(eid)
         return out
 
-    def paint_key(eid):
-        # The browser's painting order between two elements, approximately: a higher z-index wins, then a
-        # positioned element over a static one, then the later one in the page.
-        # ponytail: own z-index only; stacking contexts created by ancestors are not followed.
-        style = elements[eid].styles
-        z = int(style.get("zIndex")) if style.get("zIndex", "").lstrip("-").isdigit() else 0
-        return (z, style.get("position", "static") != "static", int(eid[1:]))
+    def context_chain(eid):
+        """Stacking contexts from the page root down to the element: (element, z-index). A positioned
+        element with a z-index makes one, and so does any fixed or sticky element (its z-index or 0)."""
+        chain, node = [], eid
+        while node is not None:
+            style = elements[node].styles
+            z_text, position = style.get("zIndex", "auto"), style.get("position", "static")
+            if z_text.lstrip("-").isdigit() and position != "static":
+                chain.append((node, int(z_text)))
+            elif position in ("fixed", "sticky"):
+                chain.append((node, 0))
+            node = elements[node].parent_id
+        return chain[::-1]
+
+    def in_front(a, b):
+        """Whether `a` paints over `b`, by the browser's order: the z-index of the first stacking contexts
+        where they differ, then a positioned element over a static one, then the later one in the page.
+        # ponytail: z-index and fixed/sticky contexts only; opacity/transform contexts are not followed.
+        """
+        ca, cb = context_chain(a), context_chain(b)
+        k = 0
+        while k < len(ca) and k < len(cb) and ca[k][0] == cb[k][0]:
+            k += 1
+        za, zb = (ca[k][1] if k < len(ca) else 0), (cb[k][1] if k < len(cb) else 0)
+        if za != zb:
+            return za > zb
+        pa = elements[a].styles.get("position", "static") != "static"
+        pb = elements[b].styles.get("position", "static") != "static"
+        if pa != pb:
+            return pa
+        return int(a[1:]) > int(b[1:])
 
     roots = [tops(members[r[0]]) for r in rows]
     hide = []
     for i in range(min(count, len(rows))):
         around = set().union(*(ancestors(e) for e in roots[i])) if roots[i] else set()
-        mine = [paint_key(e) for e in roots[i]]
         hide.append((roots[i], [
             e for j, rs in enumerate(roots) if j != i for e in rs
-            if e not in around and any(paint_key(e) > k for k in mine)  # painted in front of this section
+            if e not in around and any(in_front(e, mine) for mine in roots[i])  # painted in front of it
         ]))
     return hide + [([], []) for _ in range(count - len(hide))]
 
