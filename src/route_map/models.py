@@ -133,4 +133,6 @@ class RouteMap(BaseModel):
     routes: list[RouteRecord]
     urls: list[URLRecord]  # the full inventory, each with its route
     observations: list[PageObservation] = []
+    tree: dict = {}  # URL prefix hierarchy: nodes without a route are synthetic groupings, not pages
+    links: list[dict] = []  # route-to-route links seen on fetched pages (separate from the prefix tree)
     crawl_report: CrawlReport
