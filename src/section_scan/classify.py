@@ -390,62 +390,35 @@ def decide(run: Path, state: ClassificationState, key_name: str, status: str, la
 
 
 def export(run: Path, report: dict, state: ClassificationState) -> Path:
-    """report-classified.json: the original report, each section with a `classification` object."""
+    """report-classified.json: the original report with each section's and the page's label and confidence.
+
+    The label is the confirmed one when decided, else the proposal; null when unresolved or failed. The
+    confidence is Jev's confidence in that label: null when the reviewer chose another label, or when no
+    request was made. Full details (probabilities, model, status) stay in classification.json.
+    """
     enriched = json.loads(json.dumps(report))
     for i, section in enumerate(enriched["sections"]):
         s = state.sections.get(section_key(i), SectionState())
-        p, d = s.proposal, s.decision
-        if p is None:
-            c = {"status": "pending"}
-        elif p.status == "failed":
-            c = {"status": "failed", "source": p.source, "error": p.error, "model": p.requested_model}
-        else:
-            c = {
-                "proposed_label": p.label,
-                "confirmed_label": d.label if d and d.status == "confirmed" else None,
-                "status": d.status if d else "pending",
-                "source": p.source,
-                "model": p.model,
-                "registry_version": p.registry_version,
-            }
-            if p.source == "jev":
-                c |= {"probabilities": p.probabilities, "confidence": p.confidence}
-            if p.reason:
-                c["reason"] = p.reason
-            if p.input_shortened:
-                c["input_shortened"] = True
-        section["key"] = section_key(i)
-        section["classification"] = c
-    enriched["classification"] = _page_export(state.page)
+        p = s.proposal
+        proposed = p.label if p and p.status == "proposed" else None
+        confidence = p.confidence if p and p.status == "proposed" else None
+        section["classification"] = _label_and_confidence(proposed, confidence, s.decision)
+    page = state.page
+    enriched["classification"] = {}
+    for q in PAGE_QUESTIONS:
+        p = page.proposal
+        a = p.answers.get(q) if p and p.status == "proposed" else None
+        enriched["classification"][q] = _label_and_confidence(
+            a.label if a else None, a.confidence if a else None, page.decisions.get(q)
+        )
     out = run / "report-classified.json"
     out.write_text(json.dumps(enriched, indent=2, ensure_ascii=False))
     return out
 
 
-def _page_export(page: PageState) -> dict:
-    p = page.proposal
-    out = {}
-    for q in PAGE_QUESTIONS:
-        if p is None:
-            out[q] = {"status": "pending"}
-            continue
-        if p.status == "failed":
-            out[q] = {"status": "failed", "source": p.source, "error": p.error, "model": p.requested_model}
-            continue
-        a, d = p.answers[q], page.decisions.get(q)
-        c = {
-            "proposed_label": a.label,
-            "confirmed_label": d.label if d and d.status == "confirmed" else None,
-            "status": d.status if d else "pending",
-            "source": p.source,
-            "model": p.model,
-            "registry_version": p.registry_version,
-        }
-        if p.source == "jev":
-            c |= {"probabilities": a.probabilities, "confidence": a.confidence}
-        if p.reason:
-            c["reason"] = p.reason
-        if p.input_shortened:
-            c["input_shortened"] = True
-        out[q] = c
-    return out
+def _label_and_confidence(proposed: str | None, confidence: float | None, decision: Decision | None) -> dict:
+    if decision is None:
+        return {"label": proposed, "confidence": confidence}
+    if decision.status != "confirmed":
+        return {"label": None, "confidence": None}
+    return {"label": decision.label, "confidence": confidence if decision.label == proposed else None}

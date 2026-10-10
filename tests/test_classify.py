@@ -158,13 +158,17 @@ def test_cli_review_saves_each_decision_and_exports(run, monkeypatch):
     original = report_doc()
     for got, want in zip(doc["sections"], original["sections"]):
         assert {k: got[k] for k in want} == want  # original data kept
-    hero = doc["sections"][1]["classification"]
-    assert hero["proposed_label"] == "hero" and hero["confirmed_label"] == "cta" and hero["status"] == "confirmed"
-    assert hero["source"] == "jev" and hero["model"] == "jev-2026-09-15" and hero["registry_version"] == REGISTRY_VERSION
-    assert set(hero["probabilities"]) == set(LABELS) and "confidence" in hero
-    overlay = doc["sections"][2]["classification"]
-    assert overlay["status"] == "unresolved" and overlay["source"] == "preprocessing" and overlay["reason"] == "insufficient_content"
-    assert doc["sections"][3]["classification"]["status"] == "pending"
+    # Only the label and Jev's confidence in it are exported; details stay in classification.json.
+    assert [s["classification"] for s in doc["sections"]] == [
+        {"label": "header", "confidence": pytest.approx(0.83)},  # accepted
+        {"label": "cta", "confidence": None},  # reviewer chose another label: Jev's confidence was for "hero"
+        {"label": None, "confidence": None},  # unresolved
+        {"label": "testimonials", "confidence": pytest.approx(0.83)},  # not reviewed yet: the proposal
+        {"label": "faq", "confidence": pytest.approx(0.83)},
+    ]
+    saved = classify.load_state(run).sections["section-1"].proposal
+    assert (saved.label, saved.model, saved.registry_version) == ("hero", "jev-2026-09-15", REGISTRY_VERSION)
+    assert set(saved.probabilities) == set(LABELS)
     # Resume: the next session starts at the first undecided section.
     result = CliRunner().invoke(cli_mod.app, ["classify", str(run)], input="a\na\n")
     assert result.exit_code == 0 and "section-0 ·" not in result.output and "section-3 ·" in result.output
@@ -245,7 +249,7 @@ def test_page_failure_is_failed_not_unknown(run):
     assert page.status == "failed" and page.answers == {}
     doc = json.loads((run / "report.json").read_text())
     exported = json.loads(classify.export(run, doc, state).read_text())["classification"]
-    assert exported["industry"]["status"] == "failed" and exported["scope"]["status"] == "failed"
+    assert exported == {"industry": {"label": None, "confidence": None}, "scope": {"label": None, "confidence": None}}
 
 
 def test_cli_full_session_classifies_sections_then_page(run, monkeypatch):
@@ -259,9 +263,10 @@ def test_cli_full_session_classifies_sections_then_page(run, monkeypatch):
     result = CliRunner().invoke(cli_mod.app, ["classify", str(run)], input="a\nu\na\na\na\nc\npersonal_portfolio\n")
     assert result.exit_code == 0, result.output
     page = json.loads((run / "report-classified.json").read_text())["classification"]
-    assert page["industry"]["confirmed_label"] == "software_it" and page["industry"]["status"] == "confirmed"
-    assert page["scope"]["proposed_label"] == "company_site" and page["scope"]["confirmed_label"] == "personal_portfolio"
-    assert set(page["scope"]["probabilities"]) == set(PAGE_SCOPES) and page["scope"]["source"] == "jev"
+    assert page == {"industry": {"label": "software_it", "confidence": pytest.approx(0.83)},
+                    "scope": {"label": "personal_portfolio", "confidence": None}}
+    saved = classify.load_state(run).page.proposal.answers["scope"]
+    assert saved.label == "company_site" and set(saved.probabilities) == set(PAGE_SCOPES)
 
 
 

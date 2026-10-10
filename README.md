@@ -142,8 +142,12 @@ uv run section-scan classify runs/example --hide-dom-id   # evaluation: same con
 - **Review:** sections are shown in page order with the heading, a preview, the proposal and the next two
   labels. Actions: accept, choose another, leave unresolved, or quit (progress is kept). Your decision is
   stored separately from Jev's proposal.
-- **Files:** `classification.json` holds the state, saved after every step. `report-classified.json` is
-  the report with a `classification` object per section.
+- **Files:** `classification.json` holds the full state (proposals with probabilities, model, status and
+  decisions), saved after every step. `report-classified.json` is the report with a compact
+  `classification` per section and for the page: `{"label": …, "confidence": …}`.
+  - The label is your confirmed one, else Jev's proposal; `null` when unresolved or failed.
+  - The confidence is Jev's confidence in that label; `null` when you chose a different label or no
+    request was made.
 - **Reuse:** proposals are reused only when the input, instructions, registry and requested model all
   match. A decision made on older evidence is dropped.
 - **Page: industry and scope.** After the sections, one request asks two `Choice` questions about the
@@ -155,7 +159,7 @@ uv run section-scan classify runs/example --hide-dom-id   # evaluation: same con
   Its input is the domain, title, description, and each section's role, label (your confirmed label,
   else the proposal), headings and an excerpt. Both registries are in `labels.py`
   (`PAGE_REGISTRY_VERSION`). The page is reviewed like a section, and the export adds a top-level
-  `classification` with `industry` and `scope`. If you quit the section review, the page waits for the
+  `classification` with `industry` and `scope`, each `{"label", "confidence"}`. If you quit the section review, the page waits for the
   next session, so it is judged on your final section labels.
 
 ## Section policy
