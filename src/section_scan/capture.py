@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from .models import Browser, ElementSnapshot, Manifest, Point, Readiness, Screenshot, ScrollPass, Viewport
 
 # Bump when browser_extract.js changes what it measures, so old element files stay identifiable.
-EXTRACTOR_VERSION = "9"
+EXTRACTOR_VERSION = "10"
 _EXTRACT = (Path(__file__).parent / "browser_extract.js").read_text()
 
 
@@ -61,6 +61,33 @@ _FREEZE_ANIMATIONS = """() => document.getAnimations().forEach(a => {
   const end = a.effect && a.effect.getComputedTiming().endTime;
   if (end !== undefined && end !== Infinity) a.finish(); else a.cancel();
 })"""
+
+# Chrome's snapshot links web fonts by URL without holding them, and an opened copy loads nothing from outside
+# itself: the fonts are fetched here and written into the page as data URLs, so the copy keeps them.
+# ponytail: same-origin stylesheets only (cross-origin cssRules are unreadable); every @font-face is embedded,
+# used or not.
+_EMBED_FONTS = r"""async () => {
+  let css = '';
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch { continue; }
+    for (const rule of rules) {
+      if (!(rule instanceof CSSFontFaceRule)) continue;
+      const src = rule.style.getPropertyValue('src'), url = src.match(/url\(["']?([^"')]+)["']?\)/)?.[1];
+      if (!url || url.startsWith('data:')) continue;
+      try {
+        const blob = await (await fetch(new URL(url, sheet.href || location.href))).blob();
+        const data = await new Promise((done) => { const r = new FileReader(); r.onload = () => done(r.result); r.readAsDataURL(blob); });
+        css += `@font-face { ${rule.style.cssText.replace(src, `url("${data}")`)} }\n`;
+      } catch {}
+    }
+  }
+  const style = document.createElement('style');
+  style.id = 'ss-fonts';
+  style.textContent = css;
+  document.head.append(style);
+}"""
+
 
 _PAGE_INFO = r"""() => {
   const meta = document.querySelector('meta[name="description"]') || document.querySelector('meta[property="og:description"]');
@@ -189,9 +216,11 @@ def _run(page: Page, url, out_dir, manifest: Manifest, wait_for_operator, limits
     manifest.extractor_version = EXTRACTOR_VERSION
     # An offline copy of the page as captured (DOM with element-id tags, styles, images, fonts; no scripts run
     # when it is opened again), so section screenshots can later hide what covers a section without a visit.
+    page.evaluate(_EMBED_FONTS)
     cdp = page.context.new_cdp_session(page)
     (out_dir / "page.mhtml").write_text(cdp.send("Page.captureSnapshot", {"format": "mhtml"})["data"])
     cdp.detach()
+    page.evaluate("() => document.getElementById('ss-fonts')?.remove()")
     manifest.snapshot = "page.mhtml"
     manifest.final_url = page.url  # the page may still redirect itself during readiness waits
     manifest.title, manifest.description = page.evaluate(_PAGE_INFO)

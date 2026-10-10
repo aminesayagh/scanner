@@ -81,7 +81,9 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
   (`NN-<id or role>.png`, full resolution). For a three-breakpoint capture, each breakpoint folder gets
   its own.
   - **How they are taken:** `capture` saves an offline copy of the page (`page.mhtml`: Chrome's snapshot of
-    the DOM with styles, images and fonts, and no scripts). Each section is then screenshotted from that
+    the DOM with styles, images and fonts, and no scripts). Chrome's snapshot only links web fonts, and the
+    copy loads nothing from outside itself, so `capture` first writes the page's web fonts into it (fonts
+    from same-origin stylesheets; a cross-origin stylesheet such as a font CDN's cannot be read). Each section is then screenshotted from that
     copy with **the other sections and floating elements painted in front of it made transparent**, so
     cookie banners, sticky bars or a neighbouring section pulled up over it do not cover it. What is
     painted behind it stays, e.g. a background its text is designed to sit on. Paint order follows the

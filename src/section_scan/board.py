@@ -100,6 +100,8 @@ class Cropper:
         )
         page = context.new_page()
         page.goto((run / manifest.snapshot).resolve().as_uri(), wait_until="load")
+        # The copy links web fonts by URL without holding them: wait for them, or text shows in a fallback font.
+        page.evaluate("() => document.fonts.ready.then(() => null)")
         shots = []
         for clip, (roots, ids, sticky) in zip(clips, plans):
             live, clip = clip, page.evaluate(_FRAME, roots) or clip
@@ -305,14 +307,18 @@ def _key(pos: dict) -> tuple:
     return tuple(round(pos[k]) for k in ("x", "y", "width", "height"))
 
 
-def _saved_shots(run: Path) -> dict[tuple, Path]:
+def _saved_shots(run: Path) -> dict[tuple, list[Path]]:
     """The run's section screenshots (RUN/sections), keyed by their section's position."""
     folder, report_path = run / "sections", run / "report.json"
     if not folder.is_dir() or not report_path.exists():
         return {}
     files = {int(f.name.split("-", 1)[0]): f for f in folder.glob("*.png") if f.name.split("-", 1)[0].isdigit()}
     report = json.loads(report_path.read_text())
-    return {_key(s["position"]): files[i] for i, s in enumerate(report["sections"]) if i in files}
+    shots: dict[tuple, list[Path]] = {}
+    for i, s in enumerate(report["sections"]):
+        if i in files:  # sections can share a position (a hero and a full-screen layer over it): kept in order
+            shots.setdefault(_key(s["position"]), []).append(files[i])
+    return shots
 
 
 def _base(kind: str, id_: str, x: float, y: float, w: float, h: float) -> dict:
@@ -358,7 +364,7 @@ def build_board(targets: list[Path], cropper: Cropper) -> dict:
             crops = []
             for _, p in column["sections"]:
                 # The section's own screenshot (covering elements hidden) when saved; else a crop of the page.
-                if shot := column["shots"].get(_key(p)):
+                if shot := (column["shots"].get(_key(p)) or [None]).pop(0):
                     w, h = _png_size(png := shot.read_bytes())
                     crops += cropper.crop(png, [(0, 0, w, h)], DISPLAY_SCALE / dsf)  # its own size, not the section's
                 else:

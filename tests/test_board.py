@@ -284,6 +284,49 @@ def test_board_image_keeps_the_shot_proportions(covered, tmp_path):
         assert (image["width"], image["height"]) == struct.unpack(">II", png[16:24])  # drawn unstretched
 
 
+def test_sections_sharing_a_position_keep_their_own_shots(covered, tmp_path):
+    run, index = covered
+    shared = tmp_path / "shared"
+    shutil.copytree(run, shared)
+    report = json.loads((shared / "report.json").read_text())
+    other = next(i for i, s in enumerate(report["sections"]) if "Third section" in json.dumps(s["message"]))
+    report["sections"][other]["position"] = report["sections"][index]["position"]  # a layer over the first
+    (shared / "report.json").write_text(json.dumps(report))
+    out = tmp_path / "board.excalidraw"
+    assert cli("board", shared, "-o", out).exit_code == 0
+    scene = json.loads(out.read_text())
+    ids = {e["id"]: e["fileId"] for e in scene["elements"] if e["type"] == "image"}
+    first, layer = sorted((index, other))
+    assert ids[f"page0-page-s{first}"] != ids[f"page0-page-s{layer}"]  # each its own picture
+
+
+def test_offline_copy_keeps_the_page_web_fonts(tmp_path):
+    # Served over HTTP like a real site (pages opened from file:// cannot fetch their fonts).
+    import functools, http.server, threading
+    site = tmp_path / "site"
+    site.mkdir()
+    shutil.copy("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", site / "probe.ttf")
+    (site / "index.html").write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Fonts</title>
+      <link rel="stylesheet" href="fonts.css"></head><body><section><h2 style="font-family: Probe">Probe</h2></section></body></html>""")
+    (site / "fonts.css").write_text('@font-face { font-family: "Probe"; src: url("probe.ttf") format("truetype"); }')
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        out = tmp_path / "run"
+        assert cli("capture", f"http://127.0.0.1:{server.server_port}/", "-o", out, "--width", "800", "--height", "600").exit_code == 0
+    finally:
+        server.shutdown()
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto((out / "page.mhtml").resolve().as_uri(), wait_until="load")
+        page.evaluate("() => document.fonts.ready.then(() => null)")
+        loaded = page.evaluate("() => [...document.fonts].some((f) => f.family.replace(/\"/g, '') === 'Probe' && f.status === 'loaded')")
+        browser.close()
+    assert loaded  # the copy holds the font itself
+
+
 def test_section_with_canvas_keeps_the_live_pixels(covered):
     run, _ = covered
     report = json.loads((run / "report.json").read_text())
