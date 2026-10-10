@@ -20,6 +20,7 @@ CHROME = {"header", "nav", "footer", "aside"}
 # Structured-data types that name what a page is about; two samples with different ones are different pages.
 ROLE_TYPES = {"Product", "ProductGroup", "Article", "BlogPosting", "NewsArticle", "Recipe", "Event", "JobPosting",
               "CollectionPage", "SearchResultsPage", "ContactPage", "AboutPage", "FAQPage", "ItemList", "Offer"}
+_CHECKOUT = re.compile(r"\bcheck[\s_-]*out\b|proceed to payment|passer la commande|zur kasse", re.I)
 _PURCHASE = re.compile(r"add[\s_-]*to[\s_-]*(cart|bag|basket)|buy[\s_-]*now|ajouter au panier|in den warenkorb", re.I)
 
 
@@ -84,7 +85,8 @@ def structure(root, skip_chrome: bool) -> set[str]:
 
 
 def signals(sel: Selector, main, url: str) -> list[str]:
-    """Functional cues: purchase controls, a product/listing grid, article metadata, search, sign-in, contact."""
+    """Functional cues: purchase controls, a product/listing grid, article metadata, search, sign-in, contact,
+    checkout."""
     found = set()
     m = Selector(root=main)
     buttons = " ".join(m.css("button ::text, input[type=submit]::attr(value), button::attr(name), input::attr(name)").getall())
@@ -101,8 +103,11 @@ def signals(sel: Selector, main, url: str) -> list[str]:
         found.add("article_meta")
     if sel.css('input[type=search], form[role=search], input[name=q], input[name=s]'):
         found.add("search")
-    if sel.css("input[type=password]"):
+    if m.css("input[type=password]"):  # in the main content: a sign-in box in the header is on every page
         found.add("password")
+    controls = " ".join(m.css("button ::text, a ::text, input[type=submit]::attr(value), button::attr(name)").getall())
+    if _CHECKOUT.search(controls):
+        found.add("checkout")
     if m.css("form textarea") and m.css('form input[type=email], form input[name*=mail]'):
         found.add("contact_form")
     return sorted(found)

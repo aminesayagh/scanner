@@ -281,12 +281,12 @@ product pages become one route, `/product/{segment_2}`, instead of 1,000 entries
 `/about` stay on their own. It infers routes from the URLs it sees. It does not read the site's source
 router and does not prove that every value works. Its output is not an SEO XML sitemap.
 
-The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestones 1 to 4
-are built: discovery from the seed URL, route families and their validation on sampled pages. Page roles
-(`product_detail`, `article`, ...) and role-based parameter names are next.
+The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestones 1 to 5
+are built: discovery from the seed URL, route families, their validation on sampled pages, page roles and
+the export views. Milestone 6 (the remaining fixture scenarios and measurements) is next.
 
 ```bash
-uv run route-map https://shop.example/ -o route-map.json --max-html-pages 100   # or: python -m route_map ...
+uv run route-map https://shop.example/ -o route-map.json --summary route-map.md   # or: python -m route_map ...
 uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json     # a URL list, nothing fetched
 ```
 
@@ -348,6 +348,22 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
 - **Evidence:** each validated route lists what its samples share: `main_structure` (e.g. `5/5`), the
   JSON-LD type, functional signals (`purchase`, `listing`, `article_meta`, `search`, `password`,
   `contact_form`), and a `canonical` that points elsewhere.
+- **Page roles:** each route gets a `role` (`home`, `product_detail`, `product_listing`, `article`,
+  `article_listing`, `search_results`, `contact`, `authentication`, `cart`, `checkout`, `informational`
+  or `unknown`) and a `role_certainty`. The rules are small and listed in `src/route_map/roles.py`; the
+  reason is kept as `role` evidence.
+  - **`supported`:** at least 80% of the usable samples show the role's cues. For example, a product page
+    has Product JSON-LD and a purchase control; a product listing has a grid whose links reach product
+    pages; a login page has a password field in its main content (a sign-in box in the header does not
+    count).
+  - **`weak`:** cues on at least half the samples, or only words in the URL (`/products/...`,
+    `/blog/...`, `/cart`).
+  - **`unknown`:** no cue, an unresolved family, or two supported roles that contradict each other (the
+    reason is given). Two overlaps are settled on purpose: a product page with a related-products grid
+    stays a product page, and a search page listing products is `search_results`.
+- **Parameter names:** a parameter is renamed after its route's role only when that role is `supported`:
+  `{product_slug}` or `{product_id}`, `{article_slug}` or `{article_id}`, `{category_slug}` for listings.
+  Otherwise it keeps its neutral name (`{segment_2}`).
 - **Output:** versioned JSON (`schema_version`) holding:
   - `routes`, each with at most 3 `examples`;
   - `urls`: the full inventory, each with its `route_id` (or `assignment: "ambiguous"` / `"unresolved"`),
@@ -355,9 +371,14 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
   - `observations`: the pages fetched, each with its status, final URL, title, links, structure features,
     JSON-LD types, breadcrumbs, signals and canonical (a 200 that reads as an error or a challenge page is
     marked `unsuitable`);
+  - `tree`: the URL prefix hierarchy. A node without a route of its own (`/product` when only
+    `/product/{product_slug}` exists) is `synthetic`: a grouping, not a discovered page;
+  - `links`: route-to-route links actually seen on fetched pages (`from`, `to`, how many links, from how
+    many pages), kept apart from the prefix tree, so no category-to-product relation is invented;
   - `crawl_report`: budgets, requests used, sitemap results, skipped/blocked/failed URLs, stop reasons and
-    limitations. Its IDs and ordering depend only on the set of URLs, not on their order.
+    limitations.
+- **Summary:** `--summary FILE` also writes a Markdown table of the routes (status, role, URL and sample
+  counts, examples), their exceptions, and why the map is partial if it is. Its IDs and ordering depend only on the set of URLs, not on their order.
 - **Not yet:** one variable slot per family, so nested routes such as `/category/{a}/page/{b}` are not
   inferred. On a Shopify shop, for example, `/collections/<name>/products/<slug>` gives one family per
-  collection. Parameters have neutral names (`segment_2`); role-based names such as `product_slug` come with
-  page roles.
+  collection.

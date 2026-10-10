@@ -8,8 +8,10 @@ from urllib.parse import urlsplit
 
 from .grouping import candidates as find_candidates
 from .models import Config, CrawlReport, Evidence, PageObservation, RouteMap, RouteRecord, URLRecord
+from .export import link_edges, prefix_tree
 from .features import ROLE_TYPES
 from .normalization import Rejected, normalize, url_id
+from .roles import assign_roles
 from .validation import judge, unusable_reason
 
 
@@ -98,23 +100,24 @@ def infer(
         add((path(uid), "", "individual", uid), RouteRecord(
             id="", pattern=path(uid), status="individual", discovered_url_count=1, examples=[path(uid)],
             successful_sample_count=int(uid in obs and unusable_reason(obs[uid], by_id[uid]) is None),
+            sample_ids=[uid] if uid in obs else [],
             evidence=list(evidence)), [uid])
 
     for c in found:
         outcome = judge(c.member_ids, obs, by_id, config)
         evidence = [Evidence(kind="structure", value=f"{c.distinct_values} distinct values in {c.parameter.name}")]
         evidence += [Evidence(kind="unusable_sample", value=f"{why}: {path(u)}") for u, why in sorted(outcome.unusable.items())]
-        common = dict(pattern=c.pattern, parameters=[c.parameter])
+        common = dict(pattern=c.pattern)  # each route gets its own parameter copy: roles rename them
         if outcome.kind == "provisional":
             add((c.pattern, "", "provisional"), RouteRecord(
-                id="", status="provisional", discovered_url_count=len(c.member_ids),
+                id="", status="provisional", parameters=[c.parameter.model_copy()], discovered_url_count=len(c.member_ids),
                 successful_sample_count=len(outcome.loose), inferred_unsampled_url_count=len(c.member_ids), examples=[path(u) for u in c.sample_ids[:3]],
                 sample_ids=c.sample_ids, evidence=evidence, **common), c.member_ids)
             continue
         if outcome.kind == "unresolved":
             rest = [u for u in c.member_ids if u not in outcome.loose]
             add((c.pattern, "", "unresolved"), RouteRecord(
-                id="", status="unresolved", discovered_url_count=len(rest), inferred_unsampled_url_count=len(rest),
+                id="", status="unresolved", parameters=[c.parameter.model_copy()], discovered_url_count=len(rest), inferred_unsampled_url_count=len(rest),
                 examples=[path(u) for u in c.sample_ids[:3]], sample_ids=c.sample_ids,
                 evidence=evidence + [Evidence(kind="main_structure", value="samples disagree",
                                               sample_support=f"0/{len(outcome.loose)}")], **common),
@@ -132,7 +135,7 @@ def infer(
         for k, t in enumerate(outcome.templates):
             assigned = t if mixed else t + others
             add((c.pattern, chr(97 + k) if mixed else "", "validated_on_sample"), RouteRecord(
-                id="", status="validated_on_sample", template=chr(97 + k) if mixed else None,
+                id="", status="validated_on_sample", parameters=[c.parameter.model_copy()], template=chr(97 + k) if mixed else None,
                 discovered_url_count=len(assigned), successful_sample_count=len(t),
                 inferred_unsampled_url_count=len(assigned) - len(t), ambiguous_url_count=len(others) if mixed else 0,
                 examples=[path(u) for u in t[:3]], sample_ids=t,
@@ -164,4 +167,6 @@ def infer(
     found_report = dict(report or {})
     report = CrawlReport(**{**found_report, "budgets": config, "discovered_urls": len(records), "rejected_urls": rejected,
                             "limitations": found_report.get("limitations", []) + limitations})
-    return RouteMap(seed=seed, routes=routes, urls=records, observations=observations or [], crawl_report=report)
+    assign_roles(routes, records, observations or [], config.tracking_parameters)
+    return RouteMap(seed=seed, routes=routes, urls=records, observations=observations or [], crawl_report=report,
+                    tree=prefix_tree(routes), links=link_edges(records, observations or [], config.tracking_parameters))

@@ -7,6 +7,7 @@ import typer
 from pydantic import ValidationError
 
 from .discovery import discover
+from .export import summary as summarize
 from .inference import infer
 from .models import Config
 from .normalization import Rejected, normalize
@@ -19,6 +20,7 @@ def main(
     seed: str = typer.Argument(..., help="The website URL to map; other hosts are left out."),
     output: Path = typer.Option(Path("route-map.json"), "--output", "-o", help="Where to write the route map JSON."),
     inventory: Path | None = typer.Option(None, help="A file of URLs, one per line, mapped without fetching anything."),
+    summary: Path | None = typer.Option(None, help="Also write a readable Markdown summary here."),
     max_discovered_urls: int = typer.Option(50_000),
     max_html_pages: int = typer.Option(100),
     samples_per_family: int = typer.Option(5),
@@ -47,6 +49,8 @@ def main(
         result = infer(found["urls"], config, seed=seed, observations=found["observations"],
                        redirects=found["redirects"], report=found["report"])
     output.write_text(result.model_dump_json(indent=1))
+    if summary is not None:
+        summary.write_text(summarize(result))
     families = sum(r.status != "individual" for r in result.routes)
     typer.echo(f"{len(result.urls)} URLs → {len(result.routes)} routes ({families} families) → {output}")
     for reason in result.crawl_report.stop_reasons:
