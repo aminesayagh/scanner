@@ -281,9 +281,9 @@ product pages become one route, `/product/{segment_2}`, instead of 1,000 entries
 `/about` stay on their own. It infers routes from the URLs it sees. It does not read the site's source
 router and does not prove that every value works. Its output is not an SEO XML sitemap.
 
-The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestones 1 and 2
-are built: discovery from the seed URL and route families. Validation on sampled pages and page roles are
-the next milestones.
+The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestones 1 to 4
+are built: discovery from the seed URL, route families and their validation on sampled pages. Page roles
+(`product_detail`, `article`, ...) and role-based parameter names are next.
 
 ```bash
 uv run route-map https://shop.example/ -o route-map.json --max-html-pages 100   # or: python -m route_map ...
@@ -297,7 +297,7 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
     (no entity expansion). **Sitemap URLs only go into the inventory**: 1,000 products listed in a sitemap
     cost no page requests.
   - **Pages:** HTML pages are fetched from the seed outward. Half of `--max-html-pages` goes to discovery;
-    the rest is kept for validation (milestone 4). Each free slot goes to a page whose path shape has not
+    the rest goes to validation samples. Each free slot goes to a page whose path shape has not
     been fetched yet, so one product page is enough to show the product family, and the budget reaches
     the blog, pages and so on. `--max-depth` bounds how far from the seed links are followed.
   - **Never requested:** forms, action links (logout, add to cart, delete, ...), binary assets (images,
@@ -321,15 +321,40 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
   - Locale prefixes stay separate (`/en/product/...`, `/fr/product/...`).
   - Root pages (`/about`, `/contact`, `/privacy`) are never folded into a catch-all `/{segment_1}`.
   - When a URL fits two candidates, the larger family claims it.
-- **Status:** without page validation, every family is `provisional` (a structural hypothesis), and its
-  members include possible exceptions such as `/product/compare` until sampled pages are compared. URLs in
-  no family are `individual`. Each family carries a stable sample plan (`sample_ids`, spread over different
-  value shapes) for validation.
+- **Validation on samples:** once discovery has nothing left to fetch, each family's planned samples are
+  fetched. The plan spreads them over different value shapes (`item-12` and `compare` are different
+  shapes), and families take turns so a 1,000-product family cannot use up the budget. Pages fetched
+  during discovery count as samples for free. A family whose samples disagree gets up to 3 more.
+  - **What is compared:** each page's main content (`<main>`, `[role=main]` or `<article>`; otherwise the
+    body without header, nav, footer and aside, marked as weaker evidence) as a set of tag paths such as
+    `ul>li>a`. Texts, prices, generated ids and how many cards repeat do not count; a different component
+    does. Pages whose JSON-LD names different things (Product vs Article) never agree.
+  - **Agreement:** two pages agree when their structure overlaps by at least 50% (Jaccard).
+  - **Unusable samples:** samples that failed, were blocked, redirected elsewhere, or read as an error,
+    sign-in or challenge page are set aside (`unusable_sample` evidence). They never count against their
+    family.
+- **Status of each route:**
+  - `validated_on_sample`: at least 3 usable samples agree. Samples that differ become their own
+    `individual` routes (`/product/compare`), listed in the family's `excluded_literals` and
+    `exception_route_ids`. Unsampled members stay inferred (`inferred_unsampled_url_count`), not verified.
+  - **Two templates under one pattern** (3+ samples each): one route per template (`template: "a"`, `"b"`).
+    The unsampled members' URLs cannot tell which template they use, so they are `ambiguous`, with their
+    `candidate_route_ids`.
+  - `unresolved`: enough usable samples, but no 3 agree. The observed pages become individual routes; the
+    rest stay in the unresolved family.
+  - `provisional`: too few usable samples, for example when the page budget ran out (said in
+    `stop_reasons`), or with `--inventory`, which fetches nothing.
+  - `individual`: a URL in no family.
+- **Evidence:** each validated route lists what its samples share: `main_structure` (e.g. `5/5`), the
+  JSON-LD type, functional signals (`purchase`, `listing`, `article_meta`, `search`, `password`,
+  `contact_form`), and a `canonical` that points elsewhere.
 - **Output:** versioned JSON (`schema_version`) holding:
   - `routes`, each with at most 3 `examples`;
-  - `urls`, the full inventory, each with its `route_id`, its discovery `sources` and any `redirect_to`;
-  - `observations`, the pages fetched, each with its status, title and links (a 200 that reads as an error
-    or a challenge page is marked `unsuitable`);
+  - `urls`: the full inventory, each with its `route_id` (or `assignment: "ambiguous"` / `"unresolved"`),
+    its discovery `sources` and any `redirect_to`;
+  - `observations`: the pages fetched, each with its status, final URL, title, links, structure features,
+    JSON-LD types, breadcrumbs, signals and canonical (a 200 that reads as an error or a challenge page is
+    marked `unsuitable`);
   - `crawl_report`: budgets, requests used, sitemap results, skipped/blocked/failed URLs, stop reasons and
     limitations. Its IDs and ordering depend only on the set of URLs, not on their order.
 - **Not yet:** one variable slot per family, so nested routes such as `/category/{a}/page/{b}` are not

@@ -130,8 +130,8 @@ def test_novel_path_shapes_are_fetched_before_more_products(tmp_path):
 
     site = Site(routes)
     site.map(tmp_path, "--max-html-pages", "6")  # 3 discovery pages: the home page and two more
-    assert "/blog/first" in site.requested
-    assert sum(p.startswith("/product/") for p in site.requested) == 1  # one member shows the family
+    discovery = [p for p in site.requested if p.startswith(("/product/", "/blog/", "/?", "/ "))][:2]  # before samples
+    assert "/blog/first" in discovery and sum(p.startswith("/product/") for p in discovery) == 1
 
 
 def test_page_budget_is_reported_as_a_stop_reason(shop, tmp_path):
