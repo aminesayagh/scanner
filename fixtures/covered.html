@@ -20,6 +20,7 @@
   /* A reveal: a sticky transparent panel with white text, over a navy block that scrolls up under it. */
   #reveal { position: relative; height: 1400px; background: linear-gradient(transparent 50%, rgb(10, 20, 80) 50%); }
   #reveal .pinned { position: sticky; top: 0; height: 700px; padding: 40px; box-sizing: border-box; color: white; }
+  #drawn { padding: 40px; }
   #cookie { position: fixed; left: 0; right: 0; top: 300px; height: 80px; background: rgb(30, 160, 60); }
 </style></head>
 <body>
@@ -31,5 +32,12 @@
 <div id="layer"><section id="front-top"><h2>Front top section</h2></section><section id="front"><h2>Front section</h2></section></div>
 <section id="back"><h2>Back section</h2><p>Partly under the front</p></section>
 <section id="reveal"><div class="pinned"><h2>Have a project in mind?</h2></div></section>
+<section id="drawn"><h2>Drawn section</h2><canvas id="paint" width="300" height="120"></canvas></section>
+<script>
+  // Painted by script: the snapshot keeps the canvas element but not its pixels.
+  const g = document.getElementById('paint').getContext('2d');
+  g.fillStyle = 'rgb(250, 200, 0)';
+  g.fillRect(0, 0, 300, 120);
+</script>
 <div id="cookie"><p>We use cookies</p><button>OK</button></div>
 </body></html>

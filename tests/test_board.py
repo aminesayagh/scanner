@@ -239,3 +239,15 @@ def test_sticky_section_is_shot_as_seen_at_the_end_of_scrolling(covered):
     # The pinned white text sits over the navy block, as when scrolled: navy at the top of the shot,
     # where a flat layout would show the page's white background.
     assert pixel(png, 900, 20) == [10, 20, 80]
+
+
+
+def test_section_with_canvas_keeps_the_live_pixels(covered):
+    run, _ = covered
+    report = json.loads((run / "report.json").read_text())
+    drawn = next(i for i, s in enumerate(report["sections"]) if "Drawn section" in json.dumps(s["message"]))
+    elements = {e["id"]: e for e in json.loads((run / "elements.json").read_text())["elements"]}
+    canvas = next(e for e in elements.values() if e["tag"] == "canvas")
+    top = report["sections"][drawn]["position"]["y"]
+    x, y = canvas["bounds"]["x"] + 20, canvas["bounds"]["y"] - top + 20
+    assert pixel(first_shot(run, drawn), int(x), int(y)) == [250, 200, 0]  # the script's drawing, kept

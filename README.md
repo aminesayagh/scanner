@@ -92,6 +92,9 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
   - **Sticky sections:** a section with sticky elements (content pinned while scrolling, such as reveal
     footers) is shot as seen at the end of scrolling through it, so the pinned content sits over what
     scrolls under it. That shot is at most one screen tall.
+  - **Canvas, video and iframe sections:** the copy does not keep canvas drawings, video frames or
+    iframe contents, so sections holding them are cropped from the live capture's screenshot. Anything
+    that covered them at capture time stays in their picture.
   - **Older captures:** captures without the copy fall back to cropping `screenshot.png`.
 - **The board:** `section-scan board` writes `boards/sections.excalidraw`, one Excalidraw file for every
   page.

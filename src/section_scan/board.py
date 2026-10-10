@@ -18,6 +18,9 @@ from .breakpoints import site_runs
 from .models import ElementSnapshot, Manifest, ProposalSnapshot
 from .report import section_rows
 
+# Painted content Chrome's snapshot does not keep: sections holding it use the live capture's pixels.
+LIVE_ONLY = {"canvas", "video", "iframe", "object", "embed"}
+
 DISPLAY_SCALE = 0.5  # board size of a section relative to its CSS size
 GAP_X, GAP_BREAKPOINT, GAP_Y = 400, 100, 60  # between pages, between a page's breakpoints, between sections
 NOTE_SIZE, ROW_NOTE_SIZE = 20, 28
@@ -141,12 +144,15 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
     manifest = Manifest.model_validate_json((run / "manifest.json").read_text())
     report = json.loads((run / "report.json").read_text())
     positions = [s["position"] for s in report["sections"]]
+    dsf = manifest.device_scale_factor
+    rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for p in positions]
+    crops = cropper.crop((run / manifest.screenshot.path).read_bytes(), rects)  # the live capture
     if manifest.snapshot and (run / manifest.snapshot).exists():
-        crops = cropper.isolated(run, manifest, positions, _covering(run, len(positions)))
-    else:
-        dsf = manifest.device_scale_factor
-        rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for p in positions]
-        crops = cropper.crop((run / manifest.screenshot.path).read_bytes(), rects)
+        plans = _covering(run, len(positions))
+        clean = cropper.isolated(run, manifest, positions, [plan[:3] for plan in plans])
+        # The offline copy has no canvas drawings, video frames or iframe contents: sections holding them
+        # keep the live capture's pixels (anything that covered them at capture stays visible).
+        crops = [live if plan[3] else shot for live, shot, plan in zip(crops, clean, plans)]
     folder = run / "sections"
     if folder.is_dir():
         for old in folder.glob("*.png"):
@@ -162,9 +168,10 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
     return written
 
 
-def _covering(run: Path, count: int) -> list[tuple[list[str], list[str], bool]]:
+def _covering(run: Path, count: int) -> list[tuple[list[str], list[str], bool, bool]]:
     """For each section of report.json (same order): its top elements, the elements to hide (the top
-    elements of other sections that are painted in front of it), and whether it holds sticky elements. What is painted behind it stays (a
+    elements of other sections that are painted in front of it), whether it holds sticky elements, and
+    whether it holds content the offline copy cannot show (canvas, video, iframe, object, embed). What is painted behind it stays (a
     background the section's text is designed to sit on), and so do wrappers that contain it.
     """
     props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
@@ -222,11 +229,12 @@ def _covering(run: Path, count: int) -> list[tuple[list[str], list[str], bool]]:
     for i in range(min(count, len(rows))):
         around = set().union(*(ancestors(e) for e in roots[i])) if roots[i] else set()
         sticky = any(elements[e].styles.get("position") == "sticky" for e in members[rows[i][0]])
+        live_only = any(elements[e].tag in LIVE_ONLY for e in members[rows[i][0]])
         hide.append((roots[i], [
             e for j, rs in enumerate(roots) if j != i for e in rs
             if e not in around and any(in_front(e, mine) for mine in roots[i])  # painted in front of it
-        ], sticky))
-    return hide + [([], [], False) for _ in range(count - len(hide))]
+        ], sticky, live_only))
+    return hide + [([], [], False, False) for _ in range(count - len(hide))]
 
 
 # --- board ---------------------------------------------------------------------------------------------
