@@ -1,6 +1,7 @@
 import base64
 import json
 import shutil
+import struct
 from pathlib import Path
 
 import pytest
@@ -240,6 +241,47 @@ def test_sticky_section_is_shot_as_seen_at_the_end_of_scrolling(covered):
     # where a flat layout would show the page's white background.
     assert pixel(png, 900, 20) == [10, 20, 80]
 
+
+
+def test_long_sticky_section_is_shot_whole(covered):
+    run, _ = covered
+    report = json.loads((run / "report.json").read_text())
+    catalog = next(i for i, s in enumerate(report["sections"]) if "Catalogue label" in json.dumps(s["message"]))
+    png = first_shot(run, catalog)
+    assert struct.unpack(">II", png[16:24])[1] == 2600  # every item, not only the last screen
+    assert pixel(png, 900, 2550) == [150, 20, 60]  # the last item at the bottom
+
+
+def test_section_the_offline_copy_lays_out_differently_keeps_the_live_pixels(tmp_path):
+    # A constructed stylesheet sizes the section; the copy loses it and lays the section out smaller.
+    page = tmp_path / "restyled.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Restyled</title></head>
+      <body style="margin: 0"><section id="tall" style="padding: 20px; background: rgb(20, 120, 20)"><h2>Tall</h2></section>
+      <section style="height: 300px; padding: 20px; background: rgb(120, 20, 120)"><h2>Purple</h2></section>
+      <script>
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('#tall { height: 600px; }');
+        document.adoptedStyleSheets = [sheet];
+      </script>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert cli("capture", page.as_uri(), "-o", out, "--width", "1000", "--height", "700").exit_code == 0
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    report = json.loads((out / "report.json").read_text())
+    tall = next(i for i, s in enumerate(report["sections"]) if "Tall" in json.dumps(s["message"]))
+    png = first_shot(out, tall)
+    assert struct.unpack(">II", png[16:24])[1] == 640  # as captured, not the copy's shorter layout
+    assert pixel(png, 10, 600) == [20, 120, 20]
+
+
+def test_board_image_keeps_the_shot_proportions(covered, tmp_path):
+    run, _ = covered
+    out = tmp_path / "board.excalidraw"
+    assert cli("board", run, "-o", out).exit_code == 0
+    scene = json.loads(out.read_text())
+    for image in (e for e in scene["elements"] if e["type"] == "image"):
+        png = base64.b64decode(scene["files"][image["fileId"]]["dataURL"].split(",", 1)[1])
+        assert (image["width"], image["height"]) == struct.unpack(">II", png[16:24])  # drawn unstretched
 
 
 def test_section_with_canvas_keeps_the_live_pixels(covered):

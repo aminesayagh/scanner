@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import re
+import struct
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -80,9 +81,10 @@ class Cropper:
         where its own elements are in the copy, which can differ from the capture when scripts sized the page
         (clips[i] is the fallback).
 
-        A section with sticky elements only looks finished while scrolled: its pinned content sits over what
-        scrolls under it. It is shot as seen at the end of scrolling through it: scrolled until its bottom
-        meets the bottom of the screen, keeping what is visible (at most one screen tall).
+        A section with sticky elements at most two screens tall only looks finished while scrolled: its pinned
+        content sits over what scrolls under it. It is shot as seen at the end of scrolling through it:
+        scrolled until its bottom meets the bottom of the screen, keeping what is visible (one screen tall).
+        None for a section the copy sizes differently from the capture (the caller uses the live crop).
 
         The copy opens at the captured size and device. Chrome's snapshot keeps no scripts, so the page
         cannot change or randomize itself; hiding by opacity keeps every box where it was.
@@ -100,15 +102,17 @@ class Cropper:
         page.goto((run / manifest.snapshot).resolve().as_uri(), wait_until="load")
         shots = []
         for clip, (roots, ids, sticky) in zip(clips, plans):
-            clip = page.evaluate(_FRAME, roots) or clip
-            if clip["width"] < 1 or clip["height"] < 1:
-                shots.append(None)
+            live, clip = clip, page.evaluate(_FRAME, roots) or clip
+            if clip["width"] < 1 or clip["height"] < 1 or _drifted(clip, live):
+                shots.append(None)  # the copy cannot show it as captured: the live crop is used
                 continue
             rule = ",".join(f'[data-ss-id="{i}"]' for i in ids)
             # Inserted directly: Playwright's add_style_tag waits for a load event an MHTML page never fires.
             page.evaluate(_HIDE, f"{rule} {{ opacity: 0 !important; }}" if ids else "")
-            if sticky:
-                view = manifest.viewport.height
+            view = manifest.viewport.height
+            # ponytail: a pin over at most one extra screen is a reveal (shot scrolled); longer pinned sections
+            # are content scrolling past a pinned label, read best laid out flat.
+            if sticky and clip["height"] <= 2 * view + 1:
                 top = max(0, clip["y"] + clip["height"] - view)
                 page.evaluate("y => window.scrollTo(0, y)", top)
                 y = page.evaluate("() => window.scrollY")
@@ -131,6 +135,12 @@ class Cropper:
         return [base64.b64decode(c) if c else None for c in self._page.evaluate(_CROP, [rects, scale])]
 
 
+def _drifted(frame: dict, live: dict, tolerance: float = 0.1) -> bool:
+    """Whether the offline copy sized the section differently from the capture (lost web fonts or script
+    styles re-flowing its text, say) by more than `tolerance` of its width or height."""
+    return any(abs(frame[k] - live[k]) > tolerance * max(live[k], 1) for k in ("width", "height"))
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "section"
 
@@ -150,9 +160,9 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
     if manifest.snapshot and (run / manifest.snapshot).exists():
         plans = _covering(run, len(positions))
         clean = cropper.isolated(run, manifest, positions, [plan[:3] for plan in plans])
-        # The offline copy has no canvas drawings, video frames or iframe contents: sections holding them
-        # keep the live capture's pixels (anything that covered them at capture stays visible).
-        crops = [live if plan[3] else shot for live, shot, plan in zip(crops, clean, plans)]
+        # The offline copy has no canvas drawings, video frames or iframe contents, and can lay a section out
+        # differently: those sections keep the live capture's pixels (what covered them at capture stays).
+        crops = [live if plan[3] or shot is None else shot for live, shot, plan in zip(crops, clean, plans)]
     folder = run / "sections"
     if folder.is_dir():
         for old in folder.glob("*.png"):
@@ -287,6 +297,10 @@ def _columns(target: Path) -> list[dict]:
     return columns
 
 
+def _png_size(png: bytes) -> tuple[int, int]:
+    return struct.unpack(">II", png[16:24])  # width and height from the PNG header
+
+
 def _key(pos: dict) -> tuple:
     return tuple(round(pos[k]) for k in ("x", "y", "width", "height"))
 
@@ -345,9 +359,8 @@ def build_board(targets: list[Path], cropper: Cropper) -> dict:
             for _, p in column["sections"]:
                 # The section's own screenshot (covering elements hidden) when saved; else a crop of the page.
                 if shot := column["shots"].get(_key(p)):
-                    png = shot.read_bytes()
-                    size = (round(p["width"] * dsf), round(p["height"] * dsf))
-                    crops += cropper.crop(png, [(0, 0, *size)], DISPLAY_SCALE / dsf)
+                    w, h = _png_size(png := shot.read_bytes())
+                    crops += cropper.crop(png, [(0, 0, w, h)], DISPLAY_SCALE / dsf)  # its own size, not the section's
                 else:
                     rect = (p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf)
                     crops += cropper.crop(column["screenshot"].read_bytes(), [rect], DISPLAY_SCALE / dsf)
@@ -360,7 +373,7 @@ def build_board(targets: list[Path], cropper: Cropper) -> dict:
                     "mimeType": "image/png", "id": file_id, "created": 1, "lastRetrieved": 1,
                     "dataURL": "data:image/png;base64," + base64.b64encode(png).decode(),
                 }
-                w, h = pos["width"] * DISPLAY_SCALE, pos["height"] * DISPLAY_SCALE
+                w, h = _png_size(png)  # already at board scale
                 elements.append(_text(f"{prefix}-s{i}-note", left, y, label, NOTE_SIZE))
                 elements.append(_image(f"{prefix}-s{i}", left, y + NOTE_SIZE * 1.25 + 8, w, h, file_id))
                 y += NOTE_SIZE * 1.25 + 8 + h + GAP_Y

@@ -20,6 +20,10 @@
   /* A reveal: a sticky transparent panel with white text, over a navy block that scrolls up under it. */
   #reveal { position: relative; height: 1400px; background: linear-gradient(transparent 50%, rgb(10, 20, 80) 50%); }
   #reveal .pinned { position: sticky; top: 0; height: 700px; padding: 40px; box-sizing: border-box; color: white; }
+  /* A long catalogue: a label pinned while its items scroll past, many screens long. */
+  #catalog { display: flex; height: 2600px; }
+  #catalog .label { position: sticky; top: 0; width: 50%; height: 300px; padding: 40px; box-sizing: border-box; }
+  #catalog .items { width: 50%; background: linear-gradient(rgb(240, 240, 240) 90%, rgb(150, 20, 60) 90%); }
   #drawn { padding: 40px; }
   #cookie { position: fixed; left: 0; right: 0; top: 300px; height: 80px; background: rgb(30, 160, 60); }
 </style></head>
@@ -32,6 +36,7 @@
 <div id="layer"><section id="front-top"><h2>Front top section</h2></section><section id="front"><h2>Front section</h2></section></div>
 <section id="back"><h2>Back section</h2><p>Partly under the front</p></section>
 <section id="reveal"><div class="pinned"><h2>Have a project in mind?</h2></div></section>
+<section id="catalog"><div class="label"><h2>Catalogue label</h2></div><div class="items"><p>First item</p></div></section>
 <section id="drawn"><h2>Drawn section</h2><canvas id="paint" width="300" height="120"></canvas></section>
 <script>
   // Painted by script: the snapshot keeps the canvas element but not its pixels.

@@ -88,10 +88,13 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
     browser's rule: higher `z-index`, then positioned over static, then later in the page. Nothing
     reflows, and the site is not visited again.
   - **Framing:** each section is framed where its own elements are in the copy. Styles that scripts added
-    can be missing from the copy, so its layout may differ slightly from the capture.
+    can be missing from the copy, so its layout may differ from the capture. When the copy sizes a
+    section more than 10% wider, narrower, taller or shorter than captured (text re-flowed one word per
+    line, say), the section is cropped from the live capture's screenshot instead.
   - **Sticky sections:** a section with sticky elements (content pinned while scrolling, such as reveal
-    footers) is shot as seen at the end of scrolling through it, so the pinned content sits over what
-    scrolls under it. That shot is at most one screen tall.
+    footers) at most two screens tall is shot as seen at the end of scrolling through it, so the pinned
+    content sits over what scrolls under it (that shot is one screen tall). A longer one, such as a
+    pinned "Women" label beside a column of products, is shot whole, laid out flat.
   - **Canvas, video and iframe sections:** the copy does not keep canvas drawings, video frames or
     iframe contents, so sections holding them are cropped from the live capture's screenshot. Anything
     that covered them at capture time stays in their picture.
