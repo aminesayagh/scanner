@@ -115,12 +115,26 @@ def section_key(index: int) -> str:
 
 
 def _strip(entry):
-    """Content only: tag, text and children, without per-breakpoint `hidden` lists."""
+    """Content only: tag, text and children, without per-breakpoint `hidden` lists or image URLs."""
     out = {"tag": entry["tag"]}
     if "text" in entry:
         out["text"] = entry["text"]
     if "children" in entry:
         out["children"] = [_strip(c) for c in entry["children"]]
+    return out
+
+
+def _readable(entries: list) -> list:
+    """Drop images without alt text: a URL is no evidence of what a section is for."""
+    out = []
+    for e in entries:
+        if "children" in e:
+            e = {**e, "children": _readable(e["children"])}
+            if not e["children"]:
+                continue
+        elif e["tag"] == "img" and not e.get("text"):
+            continue
+        out.append(e)
     return out
 
 
@@ -155,7 +169,7 @@ def _shorten(entries: list) -> list:
 def build_input(report: dict, index: int, hide_dom_id: bool = False) -> tuple[dict, bool]:
     """The classification state for one section, and whether its content had to be shortened."""
     section = report["sections"][index]
-    content = _dedupe([_strip(e) for e in section["message"]])
+    content = _dedupe(_readable([_strip(e) for e in section["message"]]))
     shortened = len(json.dumps(content, ensure_ascii=False)) > CONTENT_BUDGET
     if shortened:
         content = _shorten(content)

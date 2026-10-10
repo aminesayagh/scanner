@@ -69,7 +69,8 @@ class _Unit:
 
     present: dict[str, str] = field(default_factory=dict)
     tag: str = ""
-    text: str = ""
+    text: str | None = ""
+    src: str | None = None
 
 
 @dataclass(eq=False)  # identity, not field equality
@@ -131,7 +132,8 @@ def merge(runs: dict[str, Path]) -> SiteReportDocument:
             path = run.by_id[eid].path
             u = by_path.pop(path, None) if path else None
             if u is None or run.bp in u.present:
-                u = _Unit(tag=tag, text=text)
+                source = run.by_id[eid]
+                u = _Unit(tag=tag, text=_own_text(source, tag, text), src=source.src)
                 all_units.append(u)
             u.present[run.bp] = eid
         for tag, text, eid in leaves:
@@ -206,7 +208,7 @@ def _leaves(entries) -> list[tuple[str, str, str]]:
             out.append(("li", " ".join(c.text for c in e.children), e._eid))
             out += _leaves(e.children)
         else:
-            out.append((e.tag, e.text, e._eid))
+            out.append((e.tag, e.text if e.text is not None else e.src, e._eid))  # an image without alt: its URL
     return out
 
 
@@ -348,7 +350,14 @@ def _emit(entry, order):
         return MessageGroup(tag=entry.tag, children=children, hidden=shared)
     if entry.children is not None:
         return MessageListItem(tag="li", children=[_emit(c, order) for c in entry.children], hidden=_hidden(entry.unit, order))
-    return MessageItem(tag=entry.unit.tag, text=entry.unit.text, hidden=_hidden(entry.unit, order))
+    return MessageItem(tag=entry.unit.tag, text=entry.unit.text, src=entry.unit.src, hidden=_hidden(entry.unit, order))
+
+
+def _own_text(element, tag: str, key: str | None) -> str | None:
+    """The entry's text: an image's alt (None without one; `key` is then its URL), else the text itself."""
+    if tag != "img":
+        return key
+    return " ".join((element.alt or "").split()) or None
 
 
 def _union(rects: list[Rect]) -> Rect:

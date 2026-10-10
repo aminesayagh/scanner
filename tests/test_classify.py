@@ -276,3 +276,14 @@ def test_evidence_counts_text_not_json_syntax():
     assert not classify.has_evidence(empty_group)
     page = {"page": {"title": None, "description": None}, "sections": [{"headings": [], "excerpt": ""}]}
     assert not classify.page_has_evidence(page)
+
+
+
+def test_jev_input_keeps_alt_text_and_drops_image_urls(tmp_path):
+    doc = report_doc()
+    doc["sections"][1]["message"] += [{"tag": "img", "text": "Founder portrait", "src": "https://x/p.jpg"},
+                                      {"tag": "img", "src": "https://x/logo.png"},
+                                      {"tag": "group", "children": [{"tag": "img", "src": "https://x/a.png"}]}]
+    state, _ = classify.build_input(doc, 1)
+    assert state["section"]["content"][-1] == {"tag": "img", "text": "Founder portrait"}
+    assert "https://" not in json.dumps(state)

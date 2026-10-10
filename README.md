@@ -112,8 +112,12 @@ A compact summary next to `report.html`, with sections top to bottom (excluded o
   A `group` with no siblings is unwrapped: its items become the message itself.
   A list item that holds headings or paragraphs of its own (a work entry: date, title, description) keeps
   them as its `children`: the only place a third level appears.
-- **Images:** an image's `alt` text is an entry `{ "tag": "img", "text": "…" }` in page order; decorative
-  images (`alt=""`) and images without `alt` are left out.
+- **Images:** every image is an entry in page order: `{ "tag": "img", "text": "<alt>", "src": "<url>" }`.
+  - `text` is absent when the image has no alt text (or `alt=""`).
+  - `src` is the file the browser displayed, resolved to a full URL. Embedded `data:` images keep only
+    their type (e.g. `data:image/png`).
+  - Across breakpoints, an image without alt text is matched by its `src`.
+  - Jev's classification input keeps alt text only; images with nothing but a URL are left out of it.
 - **What text counts:** the DOM text, including parts not painted at capture (a closed `<details>`,
   content waiting for an animation). Left out: elements removed with `display: none` (typically duplicate
   mobile menus) and screen-reader-only text.

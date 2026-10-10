@@ -317,7 +317,7 @@ def test_report_json_message_lists_section_content_with_tags(run):
     hero = next(c for c in contents if "Hero title" in json.dumps(c))
     assert hero == [
         {"tag": "group", "children": [{"tag": "h1", "text": "Hero title"}, {"tag": "p", "text": "Hero copy"}]},
-        {"tag": "img", "text": "Hero image"},
+        {"tag": "img", "text": "Hero image", "src": "data:image/svg+xml"},
     ]
     # A paragraph is one entry with its inline link; the link's text is not listed again.
     # A group with no siblings is unwrapped: its items are the message.
@@ -408,7 +408,8 @@ def test_report_json_content_follows_dom_branches_one_level_deep(tmp_path):
     sections = json.loads((out / "report.json").read_text())["sections"]
     header = next(s for s in sections if s["role"] == "header")["message"]
     assert header == [
-        {"tag": "p", "text": "11:26 PM, Morocco"},
+        # The logo has no alt text: it is listed by its source, beside the time in the same branch.
+        {"tag": "group", "children": [{"tag": "img", "src": "data:image/svg+xml"}, {"tag": "text", "text": "11:26 PM, Morocco"}]},
         {"tag": "group", "children": [{"tag": "a", "text": "Home"}, {"tag": "text", "text": "/"},
                                       {"tag": "a", "text": "Projects"}]},
         {"tag": "group", "children": [{"tag": "a", "text": "About us"}, {"tag": "a", "text": "Get in touch"}]},
@@ -458,7 +459,7 @@ def test_report_json_list_items_keep_their_parts_including_collapsed_text(tmp_pa
     assert "Screen reader only" not in json.dumps(message)
 
 
-def test_report_json_includes_image_alt_text_as_content(tmp_path):
+def test_report_json_lists_every_image_with_its_alt_text_and_source(tmp_path):
     svg = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'/>"
     page = tmp_path / "images.html"
     page.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Images</title></head>
@@ -475,12 +476,17 @@ def test_report_json_includes_image_alt_text_as_content(tmp_path):
     assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
     assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
     message = json.loads((out / "report.json").read_text())["sections"][0]["message"]
-    assert message[:2] == [{"tag": "h2", "text": "Team"}, {"tag": "img", "text": "Portrait of the founder"}]
-    assert message[2] == {"tag": "ul", "children": [
-        {"tag": "li", "children": [{"tag": "h3", "text": "Project"}, {"tag": "img", "text": "Project screenshot"}]},
-        {"tag": "li", "text": "Plain"},
-    ]}
-    assert len(message) == 3  # decorative (alt="") and alt-less images add nothing
+    svg = {"src": "data:image/svg+xml"}  # embedded images keep only their type, not their bytes
+    assert message == [
+        {"tag": "h2", "text": "Team"},
+        {"tag": "img", "text": "Portrait of the founder", **svg},
+        {"tag": "img", **svg},  # alt="": listed by its source
+        {"tag": "img", **svg},  # no alt attribute: listed by its source
+        {"tag": "ul", "children": [
+            {"tag": "li", "children": [{"tag": "h3", "text": "Project"}, {"tag": "img", "text": "Project screenshot", **svg}]},
+            {"tag": "li", "text": "Plain"},
+        ]},
+    ]
 
 
 
@@ -504,3 +510,17 @@ def test_report_json_links_are_a_entries_and_carousel_slides_count(tmp_path):
     assert '{"tag": "a", "text": "Let\'s talk"}' in text  # one entry for the whole button label
     assert '{"tag": "h3", "text": "Case study"}' in text  # a card link stays a container of its parts
     assert all(f"Slide {n}" in text for n in ("one", "two", "three"))  # slides outside the page area count
+
+
+
+def test_image_src_is_the_displayed_url(tmp_path):
+    (tmp_path / "photo.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'/>")
+    page = tmp_path / "page.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Src</title></head>
+      <body style="margin: 0"><section style="padding: 40px"><h2>Photo</h2><img src="photo.svg" width="40" height="40"></section>
+      <section style="padding: 40px; background: rgb(30, 30, 60)"><h2>Next</h2></section></body></html>""")
+    out = tmp_path / "run"
+    assert capture(page.as_uri(), out, width=1000, height=700).status == "complete"
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    message = json.loads((out / "report.json").read_text())["sections"][0]["message"]
+    assert message[1] == {"tag": "img", "src": (tmp_path / "photo.svg").as_uri()}  # resolved to a full URL

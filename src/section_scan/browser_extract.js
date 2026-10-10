@@ -18,6 +18,11 @@
 
   const rect = (r) => ({ x: r.left, y: r.top, width: r.width, height: r.height });
   const collapse = (t) => t.replace(/\s+/g, ' ').trim();
+  const srcOf = (img) => {
+    const src = img.currentSrc || img.src || '';
+    if (!src) return null;
+    return src.startsWith('data:') ? src.slice(0, src.search(/[;,]/) > 0 ? src.search(/[;,]/) : 40) : src;
+  };
   // Where the element sits in the DOM, anchored on the nearest ancestor with an id: e.g. "#work>ul>li[3]>h3".
   // Siblings are counted per tag. Used to match the same slot across separate page loads.
   const pathOf = (el) => {
@@ -216,6 +221,8 @@
       role: el.getAttribute('role'),
       html_id: el.id || null,
       alt: tag === 'img' ? el.getAttribute('alt') : null,
+      // The file actually shown (srcset resolved); embedded data: images keep only their type.
+      src: tag === 'img' ? srcOf(el) : null,
       path: pathOf(el),
       text: LEAF.has(tag) ? '' : ownText(el),
       // Links are read whole too: a button-like <a> often wraps its label in spans.

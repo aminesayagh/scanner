@@ -107,6 +107,7 @@ class Element(BaseModel):
     html_id: str | None = None  # the element's id attribute (scroll anchor); absent before extractor 3
     alt: str | None = None  # an img's alt attribute ("" = decorative); absent before extractor 5
     path: str | None = None  # DOM path anchored on the nearest id, e.g. "#work>ul>li[3]"; absent before extractor 6
+    src: str | None = None  # an img's displayed URL (data: images: type only); absent before extractor 8
     text: str  # whitespace-collapsed own text (not descendants'), truncated
     # Untruncated text: the whole rendered text for h1-h6/p/li, own text otherwise. Absent before extractor 3.
     full_text: str | None = None
@@ -463,7 +464,8 @@ class MessageItem(BaseModel):
     # "a": a link's text; "img": an image's alt text (decorative images, alt="", are left out);
     # "text": any other text
     tag: Literal["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "a", "text", "img"]
-    text: str
+    text: str | None = None  # an img without alt text has none
+    src: str | None = None  # img only: the displayed image URL
     hidden: list[str] = []  # breakpoints where this content is not shown (multi-breakpoint reports only)
 
 

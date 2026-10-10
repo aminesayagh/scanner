@@ -61,17 +61,17 @@ def test_sections_hidden_per_breakpoint(site):
 
 def test_content_hidden_per_breakpoint(site):
     _, doc = site
-    intro = {i["text"]: i for i in items(by_id(doc, "intro"))}
+    intro = {i.get("text", ""): i for i in items(by_id(doc, "intro"))}
     assert intro["Long desktop paragraph"]["hidden"] == ["mobile"]
     assert "hidden" not in intro["Shown everywhere"]
-    header = {i["text"]: i for s in doc["sections"] if s["role"] == "header" for i in items(s)}
+    header = {i.get("text", ""): i for s in doc["sections"] if s["role"] == "header" for i in items(s)}
     assert header["Menu"]["hidden"] == ["laptop", "tablet"]
     assert header["Home"]["hidden"] == ["mobile"]
 
 
 def test_random_content_is_listed_once_not_hidden(site):
     _, doc = site
-    quotes = [i for s in doc["sections"] for i in items(s) if i["text"].startswith("Quote ")]
+    quotes = [i for s in doc["sections"] for i in items(s) if i.get("text", "").startswith("Quote ")]
     assert len(quotes) == 1 and "hidden" not in quotes[0]  # three different texts, one slot
 
 
@@ -85,7 +85,7 @@ def test_single_viewport_capture_still_works(tmp_path):
 def test_same_text_in_different_elements_is_one_content(site):
     _, doc = site
     header = [i for s in doc["sections"] if s["role"] == "header" for i in items(s)]
-    contact = [i for i in header if i["text"] == "Contact us"]
+    contact = [i for i in header if i.get("text", "") == "Contact us"]
     assert len(contact) == 1 and "hidden" not in contact[0]  # desktop nav link and mobile menu link
 
 
@@ -97,12 +97,21 @@ def test_section_without_content_is_matched_not_duplicated(site):
 
 def test_phone_user_agent_content_is_captured(site):
     _, doc = site
-    intro = {i["text"]: i for i in items(by_id(doc, "intro"))}
+    intro = {i.get("text", ""): i for i in items(by_id(doc, "intro"))}
     assert intro["Open in the app"]["hidden"] == ["laptop", "tablet"]  # served only to the emulated iPhone
 
 
 def test_shuffled_gallery_rebuilt_per_width_lists_each_image_once(site):
     _, doc = site
     shots = [i for i in items(by_id(doc, "shots")) if i["tag"] == "img"]
-    assert sorted(i["text"] for i in shots) == [f"Shot {n}" for n in range(1, 7)]
+    assert sorted(i.get("text", "") for i in shots) == [f"Shot {n}" for n in range(1, 7)]
     assert not any("hidden" in i for i in shots)
+
+
+def test_image_without_alt_is_matched_by_source(site):
+    _, doc = site
+    logos = [i for s in doc["sections"] for i in items(s) if i.get("src", "").endswith("logo-mark.svg")]
+    assert len(logos) == 1 and "text" not in logos[0] and "hidden" not in logos[0]
+    # One alt-less image only on desktop, another only on mobile: only their sources tell them apart.
+    badges = {i["src"].rsplit("/", 1)[-1]: i.get("hidden") for s in doc["sections"] for i in items(s) if "badge-" in i.get("src", "")}
+    assert badges == {"badge-a.svg": ["mobile"], "badge-b.svg": ["laptop", "tablet"]}

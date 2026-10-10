@@ -213,16 +213,18 @@ def _leaf_items(roots, members: set[str], by_id) -> list[MessageItem | MessageLi
                     items.append(entry)
                 continue
         if e.tag == "img":
-            if alt := (e.alt or "").strip():  # alt="" marks a decorative image
-                items.append(_item("img", " ".join(alt.split()), eid))
+            # Every image counts: its alt text when it has one, and its source URL.
+            alt = " ".join((e.alt or "").split()) or None
+            if alt or e.src:
+                items.append(_item("img", alt, eid, src=e.src))
             continue
         if text := _text_of(e):
             items.append(_item(e.tag if e.tag in TEXT_BLOCKS else "text", text, eid))
     return items
 
 
-def _item(tag: str, text: str, eid: str) -> MessageItem:
-    item = MessageItem(tag=tag, text=text)
+def _item(tag: str, text: str | None, eid: str, src: str | None = None) -> MessageItem:
+    item = MessageItem(tag=tag, text=text, src=src)
     item._eid = eid
     return item
 
