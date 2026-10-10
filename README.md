@@ -87,6 +87,11 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
     painted behind it stays, e.g. a background its text is designed to sit on. Paint order follows the
     browser's rule: higher `z-index`, then positioned over static, then later in the page. Nothing
     reflows, and the site is not visited again.
+  - **Framing:** each section is framed where its own elements are in the copy. Styles that scripts added
+    can be missing from the copy, so its layout may differ slightly from the capture.
+  - **Sticky sections:** a section with sticky elements (content pinned while scrolling, such as reveal
+    footers) is shot as seen at the end of scrolling through it, so the pinned content sits over what
+    scrolls under it. That shot is at most one screen tall.
   - **Older captures:** captures without the copy fall back to cropping `screenshot.png`.
 - **The board:** `section-scan board` writes `boards/sections.excalidraw`, one Excalidraw file for every
   page.

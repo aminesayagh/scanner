@@ -228,3 +228,14 @@ def test_stacking_context_of_an_ancestor_decides_what_is_in_front(covered):
     back = next(i for i, s in enumerate(report["sections"]) if "Back section" in json.dumps(s["message"]))
     # The front section is static, but its wrapper (z-index 10) paints it over the back section (z-index 0).
     assert pixel(first_shot(run, back), 600, 20) == [20, 150, 150]  # hidden: the back section's own colour
+
+
+
+def test_sticky_section_is_shot_as_seen_at_the_end_of_scrolling(covered):
+    run, _ = covered
+    report = json.loads((run / "report.json").read_text())
+    reveal = next(i for i, s in enumerate(report["sections"]) if "Have a project in mind?" in json.dumps(s["message"]))
+    png = first_shot(run, reveal)
+    # The pinned white text sits over the navy block, as when scrolled: navy at the top of the shot,
+    # where a flat layout would show the page's white background.
+    assert pixel(png, 900, 20) == [10, 20, 80]

@@ -70,11 +70,16 @@ class Cropper:
         self._pw.stop()
 
     def isolated(
-        self, run: Path, manifest: Manifest, clips: list[dict], plans: list[tuple[list[str], list[str]]]
+        self, run: Path, manifest: Manifest, clips: list[dict], plans: list[tuple[list[str], list[str], bool]]
     ) -> list[bytes | None]:
         """Screenshots of each section from the page's offline copy. plans[i] = (the section's top elements,
-        the elements to make transparent first). The section is framed where its own elements are in the
-        copy, which can differ from the capture when scripts sized the page (clips[i] is the fallback).
+        the elements to make transparent first, whether it holds sticky elements). The section is framed
+        where its own elements are in the copy, which can differ from the capture when scripts sized the page
+        (clips[i] is the fallback).
+
+        A section with sticky elements only looks finished while scrolled: its pinned content sits over what
+        scrolls under it. It is shot as seen at the end of scrolling through it: scrolled until its bottom
+        meets the bottom of the screen, keeping what is visible (at most one screen tall).
 
         The copy opens at the captured size and device. Chrome's snapshot keeps no scripts, so the page
         cannot change or randomize itself; hiding by opacity keeps every box where it was.
@@ -91,7 +96,7 @@ class Cropper:
         page = context.new_page()
         page.goto((run / manifest.snapshot).resolve().as_uri(), wait_until="load")
         shots = []
-        for clip, (roots, ids) in zip(clips, plans):
+        for clip, (roots, ids, sticky) in zip(clips, plans):
             clip = page.evaluate(_FRAME, roots) or clip
             if clip["width"] < 1 or clip["height"] < 1:
                 shots.append(None)
@@ -99,7 +104,18 @@ class Cropper:
             rule = ",".join(f'[data-ss-id="{i}"]' for i in ids)
             # Inserted directly: Playwright's add_style_tag waits for a load event an MHTML page never fires.
             page.evaluate(_HIDE, f"{rule} {{ opacity: 0 !important; }}" if ids else "")
-            shots.append(page.screenshot(clip=clip, full_page=True, animations="disabled"))
+            if sticky:
+                view = manifest.viewport.height
+                top = max(0, clip["y"] + clip["height"] - view)
+                page.evaluate("y => window.scrollTo(0, y)", top)
+                y = page.evaluate("() => window.scrollY")
+                visible_top = max(clip["y"] - y, 0)
+                visible = {"x": clip["x"], "y": visible_top, "width": clip["width"],
+                           "height": min(clip["y"] + clip["height"] - y, view) - visible_top}
+                shots.append(page.screenshot(clip=visible, animations="disabled") if visible["height"] >= 1 else None)
+                page.evaluate("() => window.scrollTo(0, 0)")
+            else:
+                shots.append(page.screenshot(clip=clip, full_page=True, animations="disabled"))
             page.evaluate(_HIDE, None)
         context.close()
         return shots
@@ -146,9 +162,9 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
     return written
 
 
-def _covering(run: Path, count: int) -> list[tuple[list[str], list[str]]]:
-    """For each section of report.json (same order): its top elements, and the elements to hide: the top
-    elements of other sections that are painted in front of it. What is painted behind it stays (a
+def _covering(run: Path, count: int) -> list[tuple[list[str], list[str], bool]]:
+    """For each section of report.json (same order): its top elements, the elements to hide (the top
+    elements of other sections that are painted in front of it), and whether it holds sticky elements. What is painted behind it stays (a
     background the section's text is designed to sit on), and so do wrappers that contain it.
     """
     props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
@@ -205,11 +221,12 @@ def _covering(run: Path, count: int) -> list[tuple[list[str], list[str]]]:
     hide = []
     for i in range(min(count, len(rows))):
         around = set().union(*(ancestors(e) for e in roots[i])) if roots[i] else set()
+        sticky = any(elements[e].styles.get("position") == "sticky" for e in members[rows[i][0]])
         hide.append((roots[i], [
             e for j, rs in enumerate(roots) if j != i for e in rs
             if e not in around and any(in_front(e, mine) for mine in roots[i])  # painted in front of it
-        ]))
-    return hide + [([], []) for _ in range(count - len(hide))]
+        ], sticky))
+    return hide + [([], [], False) for _ in range(count - len(hide))]
 
 
 # --- board ---------------------------------------------------------------------------------------------
