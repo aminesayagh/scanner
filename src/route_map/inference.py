@@ -41,12 +41,21 @@ def records_from(urls: list[tuple[str, str]], config: Config, seed: str | None =
 
 def infer(
     urls: list[tuple[str, str]], config: Config | None = None, seed: str | None = None,
-    observations: list[PageObservation] | None = None,
+    observations: list[PageObservation] | None = None, redirects: dict[str, str] | None = None,
+    report: dict | None = None,
 ) -> RouteMap:
     """Route families from an inventory. Without page observations every family is provisional (a
     structural hypothesis); validation on samples is the next stage. URLs in no family stay individual."""
     config = config or Config()
     records, rejected = records_from(urls, config, seed)
+    moved = {}
+    for source, target in (redirects or {}).items():
+        try:
+            moved[normalize(source, tracking=config.tracking_parameters)["comparison_key"]] = target
+        except Rejected:
+            pass
+    for r in records:
+        r.redirect_to = moved.get(r.comparison_key)  # evidence only: a redirect does not set a role
     plain = [r.model_dump() | {"host": urlsplit(r.crawl_url).netloc} for r in records]
     found = find_candidates(plain, config.min_distinct_values, config.samples_per_family)
     by_id = {r.id: r for r in records}
@@ -77,5 +86,7 @@ def infer(
     limitations = []
     if any(r.hash_route for r in records):
         limitations.append("hash-router URLs (#/ or #!) found: client-side routes are not followed in this version")
-    report = CrawlReport(budgets=config, discovered_urls=len(records), rejected_urls=rejected, limitations=limitations)
+    found_report = dict(report or {})
+    report = CrawlReport(**{**found_report, "budgets": config, "discovered_urls": len(records), "rejected_urls": rejected,
+                            "limitations": found_report.get("limitations", []) + limitations})
     return RouteMap(seed=seed, routes=routes, urls=records, observations=observations or [], crawl_report=report)

@@ -40,3 +40,15 @@ matter for review.
 Content of a closed `<details>` element (e.g. a language dropdown) is not painted and not hit-testable,
 but is still reported visible. A rule "element absent from the browser's hit stack at its own centre"
 would catch it on the first screen. Small and low impact; revisit with the next visibility pass.
+
+## route-map: limits after milestone 2 (deferred)
+
+- **One variable slot per family.** `/collections/<name>/products/<slug>` on a Shopify shop gives one
+  family per collection instead of `/collections/{collection}/products/{product}`. The plan adds
+  multi-variable families after validation (incremental generalization).
+- **No rendering.** Pages are read as served HTML. A JavaScript shell (a seed page without links) is
+  only reported as a limitation; optional Playwright rendering is a later extension.
+- **Action-link filter by URL words.** Links whose path or query holds words such as `logout`,
+  `add-to-cart`, `remove` or `delete` are never requested, so a real page such as
+  `/product/remove-tool` would be skipped too. A smarter rule would look at the link's context
+  (a form button, a `rel` or a `data-` attribute).
