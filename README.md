@@ -82,11 +82,12 @@ Each load is a normal run in `DIR/laptop`, `DIR/tablet`, `DIR/mobile`, so `revie
   its own. They are cropped from the saved screenshot, so the site is not visited again.
 - **The board:** `section-scan board` writes `boards/sections.excalidraw`, one Excalidraw file for every
   page.
-  - **Columns:** one per page, left to right, with a note at the top left (title, link, and industry and
-    scope once classified).
-  - **Sections:** top to bottom in their page's column, each with a note at its top left (its confirmed or
-    proposed label, or its role, and `#id`).
-  - **Breakpoint:** three-breakpoint captures show their laptop layout.
+  - **Columns:** pages left to right, each shown three times side by side (laptop, tablet, mobile), every
+    column built from that breakpoint's own screenshot. The note at each column's top left has the title,
+    link, industry and scope once classified, and the breakpoint. A single-viewport capture has one
+    column.
+  - **Sections:** top to bottom in each column, each with a note at its top left (its confirmed or
+    proposed label, or its role, and `#id`). A section hidden at a breakpoint is absent from that column.
   - **Which captures:** without arguments it takes the most recent capture of each page in `./runs`;
     pass folders to choose.
 

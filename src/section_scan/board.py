@@ -1,4 +1,5 @@
-"""Section screenshots and the Excalidraw board of all pages (one column per page, sections top to bottom).
+"""Section screenshots and the Excalidraw board of all pages (a column per page and breakpoint, sections
+top to bottom).
 
 Everything is cropped from the saved screenshots: no site is visited. Cropping uses a canvas in the
 Playwright browser already used for capture, so no image library is needed.
@@ -16,7 +17,7 @@ from .breakpoints import site_runs
 from .models import Manifest
 
 DISPLAY_SCALE = 0.5  # board size of a section relative to its CSS size
-GAP_X, GAP_Y = 200, 60  # between page columns, between sections in a column
+GAP_X, GAP_BREAKPOINT, GAP_Y = 400, 100, 60  # between pages, between a page's breakpoints, between sections
 NOTE_SIZE, ROW_NOTE_SIZE = 20, 28
 
 _CROP = """([rects, scale]) => {
@@ -96,35 +97,37 @@ def latest_per_page(targets) -> list[Path]:
     return sorted(t for _, t in best.values())
 
 
-def _row(target: Path) -> dict:
-    """A page's column: its note, screenshot and sections (laptop layout for three-breakpoint captures)."""
-    runs = site_runs(target)
-    if runs:
-        bp = "laptop" if "laptop" in runs else next(iter(runs))
-        run = runs[bp]
-    else:
-        bp, run = None, target
+def _columns(target: Path) -> list[dict]:
+    """A page's columns: one per breakpoint (laptop, tablet, mobile), or one for a single-viewport capture.
+
+    Each holds its note, its breakpoint's screenshot and the sections shown at that breakpoint.
+    """
+    runs = site_runs(target) or {None: target}
     report_path = target / "report-classified.json"
     report = json.loads((report_path if report_path.exists() else target / "report.json").read_text())
-    manifest = Manifest.model_validate_json((run / "manifest.json").read_text())
-    sections = []
-    for n, s in enumerate(report["sections"], 1):
-        pos = s["position"].get(bp) if bp else s["position"]
-        if not pos or pos["width"] <= 0 or pos["height"] <= 0:
-            continue  # not shown at this breakpoint
-        label = (s.get("classification") or {}).get("label") or s["role"]
-        note = f"{n}. {label}" + (f"  #{s['id']}" if s.get("id") else "")
-        sections.append((note, pos))
     lines = [report.get("title") or "(no title)", report.get("link") or ""]
     page_class = report.get("classification") or {}
     if page_class:
         lines.append(" · ".join(f"{q}: {c.get('label') or '—'}" for q, c in page_class.items()))
-    return {
-        "note": "\n".join(line for line in lines if line),
-        "screenshot": run / manifest.screenshot.path,
-        "dsf": manifest.device_scale_factor,
-        "sections": sections,
-    }
+    columns = []
+    for bp, run in runs.items():
+        manifest = Manifest.model_validate_json((run / "manifest.json").read_text())
+        sections = []
+        for n, s in enumerate(report["sections"], 1):
+            pos = s["position"].get(bp) if bp else s["position"]
+            if not pos or pos["width"] <= 0 or pos["height"] <= 0:
+                continue  # not shown at this breakpoint
+            label = (s.get("classification") or {}).get("label") or s["role"]
+            sections.append((f"{n}. {label}" + (f"  #{s['id']}" if s.get("id") else ""), pos))
+        viewport = f"{bp} · {manifest.viewport.width}×{manifest.viewport.height}" if bp else None
+        columns.append({
+            "bp": bp or "page",
+            "note": "\n".join(line for line in lines + [viewport] if line),
+            "screenshot": run / manifest.screenshot.path,
+            "dsf": manifest.device_scale_factor,
+            "sections": sections,
+        })
+    return columns
 
 
 def _base(kind: str, id_: str, x: float, y: float, w: float, h: float) -> dict:
@@ -155,32 +158,36 @@ def _image(id_: str, x: float, y: float, w: float, h: float, file_id: str) -> di
 
 
 def build_board(targets: list[Path], cropper: Cropper) -> dict:
-    """An Excalidraw scene: one column per page (left to right), its sections top to bottom, notes top left."""
+    """An Excalidraw scene: pages left to right, each as a column per breakpoint (laptop, tablet, mobile)
+    with its sections top to bottom; a note at the top left of every column and section.
+    """
     elements, files = [], {}
     left = 0.0
     for c, target in enumerate(targets):
-        page = _row(target)
-        note = _text(f"page{c}-note", left, 0, page["note"], ROW_NOTE_SIZE)
-        elements.append(note)
-        y = note["height"] + 40
-        dsf = page["dsf"]
-        rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for _, p in page["sections"]]
-        crops = cropper.crop(page["screenshot"].read_bytes(), rects, DISPLAY_SCALE / dsf)
-        widest = note["width"]
-        for i, ((label, pos), png) in enumerate(zip(page["sections"], crops)):
-            if png is None:
-                continue
-            file_id = hashlib.sha256(png).hexdigest()[:40]
-            files[file_id] = {
-                "mimeType": "image/png", "id": file_id, "created": 1, "lastRetrieved": 1,
-                "dataURL": "data:image/png;base64," + base64.b64encode(png).decode(),
-            }
-            w, h = pos["width"] * DISPLAY_SCALE, pos["height"] * DISPLAY_SCALE
-            elements.append(_text(f"page{c}-s{i}-note", left, y, label, NOTE_SIZE))
-            elements.append(_image(f"page{c}-s{i}", left, y + NOTE_SIZE * 1.25 + 8, w, h, file_id))
-            y += NOTE_SIZE * 1.25 + 8 + h + GAP_Y
-            widest = max(widest, w)
-        left += widest + GAP_X
+        for column in _columns(target):
+            prefix = f"page{c}-{column['bp']}"
+            note = _text(f"{prefix}-note", left, 0, column["note"], ROW_NOTE_SIZE)
+            elements.append(note)
+            y = note["height"] + 40
+            dsf = column["dsf"]
+            rects = [(p["x"] * dsf, p["y"] * dsf, p["width"] * dsf, p["height"] * dsf) for _, p in column["sections"]]
+            crops = cropper.crop(column["screenshot"].read_bytes(), rects, DISPLAY_SCALE / dsf)
+            widest = note["width"]
+            for i, ((label, pos), png) in enumerate(zip(column["sections"], crops)):
+                if png is None:
+                    continue
+                file_id = hashlib.sha256(png).hexdigest()[:40]
+                files[file_id] = {
+                    "mimeType": "image/png", "id": file_id, "created": 1, "lastRetrieved": 1,
+                    "dataURL": "data:image/png;base64," + base64.b64encode(png).decode(),
+                }
+                w, h = pos["width"] * DISPLAY_SCALE, pos["height"] * DISPLAY_SCALE
+                elements.append(_text(f"{prefix}-s{i}-note", left, y, label, NOTE_SIZE))
+                elements.append(_image(f"{prefix}-s{i}", left, y + NOTE_SIZE * 1.25 + 8, w, h, file_id))
+                y += NOTE_SIZE * 1.25 + 8 + h + GAP_Y
+                widest = max(widest, w)
+            left += widest + GAP_BREAKPOINT
+        left += GAP_X - GAP_BREAKPOINT
     return {
         "type": "excalidraw", "version": 2, "source": "section-scan",
         "elements": elements, "appState": {"viewBackgroundColor": "#ffffff", "gridSize": None}, "files": files,

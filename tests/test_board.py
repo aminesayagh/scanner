@@ -53,7 +53,7 @@ def test_report_saves_one_screenshot_per_section(runs):
     assert all((site / bp / "sections").is_dir() for bp in ("laptop", "tablet", "mobile"))
 
 
-def test_board_has_a_column_per_page_and_sections_top_to_bottom(runs, tmp_path):
+def test_board_has_a_column_per_page_and_breakpoint_with_sections_top_to_bottom(runs, tmp_path):
     root, single, site = runs
     out = tmp_path / "board.excalidraw"
     result = cli("board", single, site, "-o", out)
@@ -62,23 +62,30 @@ def test_board_has_a_column_per_page_and_sections_top_to_bottom(runs, tmp_path):
     assert scene["type"] == "excalidraw" and scene["version"] == 2
     elements = {e["id"]: e for e in scene["elements"]}
     notes = [e for e in scene["elements"] if e["id"].endswith("-note") and "-s" not in e["id"]]
-    assert [n["id"] for n in notes] == ["page0-note", "page1-note"] and notes[0]["x"] < notes[1]["x"]  # pages left to right
-    assert notes[0]["y"] == notes[1]["y"]  # page notes on one line, at the top
+    # The single capture has one column; the three-breakpoint page has laptop, tablet, mobile, left to right.
+    assert [n["id"] for n in notes] == ["page0-page-note", "page1-laptop-note", "page1-tablet-note", "page1-mobile-note"]
+    xs = [n["x"] for n in notes]
+    assert all(a < b for a, b in zip(xs, xs[1:])) and len({n["y"] for n in notes}) == 1
     assert "Candidates (landmarks)" in notes[0]["text"] and "Responsive" in notes[1]["text"]
-    for c in (0, 1):
-        images = [e for e in scene["elements"] if e["type"] == "image" and e["id"].startswith(f"page{c}-")]
+    assert [n["text"].splitlines()[-1] for n in notes[1:]] == ["laptop · 1440×900", "tablet · 768×1024", "mobile · 390×844"]
+    columns = {n["id"].removesuffix("-note"): n for n in notes}
+    for prefix, note in columns.items():
+        images = [e for e in scene["elements"] if e["type"] == "image" and e["id"].startswith(prefix + "-s")]
         ys = [i["y"] for i in images]
         assert images and all(a < b for a, b in zip(ys, ys[1:]))  # strictly top to bottom
-        assert len({i["x"] for i in images}) == 1 and images[0]["x"] == notes[c]["x"]  # one column, under its note
+        assert len({i["x"] for i in images}) == 1 and images[0]["x"] == note["x"]  # one column, under its note
         assert all(a["y"] + a["height"] < b["y"] for a, b in zip(images, images[1:]))  # sections do not overlap
         for image in images:
-            note = elements[image["id"] + "-note"]
-            assert note["x"] == image["x"] and note["y"] < image["y"]  # note at the section's top left
+            label = elements[image["id"] + "-note"]
+            assert label["x"] == image["x"] and label["y"] < image["y"]  # note at the section's top left
             assert scene["files"][image["fileId"]]["dataURL"].startswith("data:image/png;base64,")
-    col1 = [e for e in scene["elements"] if e["id"].startswith("page1-s") and e["type"] == "text"]
-    assert not any("#app" in e["text"] for e in col1)  # the mobile-only section is not in the laptop column
-    right_of_col0 = max(e["x"] + e["width"] for e in scene["elements"] if e["id"].startswith("page0-"))
-    assert all(e["x"] > right_of_col0 for e in scene["elements"] if e["id"].startswith("page1-"))  # columns do not overlap
+    texts = lambda prefix: " ".join(e["text"] for e in scene["elements"] if e["id"].startswith(prefix + "-s") and e["type"] == "text")  # noqa: E731
+    assert "#app" in texts("page1-mobile") and "#app" not in texts("page1-laptop")  # mobile-only section
+    assert "#gallery" in texts("page1-laptop") and "#gallery" not in texts("page1-mobile")  # hidden on mobile
+    ordered = list(columns)
+    for left_col, right_col in zip(ordered, ordered[1:]):  # columns do not overlap
+        right_edge = max(e["x"] + e["width"] for e in scene["elements"] if e["id"].startswith(left_col + "-"))
+        assert all(e["x"] > right_edge for e in scene["elements"] if e["id"].startswith(right_col + "-"))
 
 
 def test_board_uses_classified_labels_and_page_classification(runs, tmp_path):
