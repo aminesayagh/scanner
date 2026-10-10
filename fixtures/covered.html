@@ -8,11 +8,16 @@
   /* Pulled up over the end of #first, as overlapping "reveal" designs do. */
   #second { margin-top: -120px; position: relative; height: 400px; padding: 40px; background: rgb(30, 30, 200); }
   #third { height: 400px; padding: 40px; background: rgb(240, 240, 240); }
+  /* A section designed to sit on the one before it: white text, no background of its own. */
+  #base { position: relative; height: 300px; background: rgb(20, 30, 90); }
+  #over { position: relative; margin-top: -300px; height: 300px; padding: 40px; color: white; }
   #cookie { position: fixed; left: 0; right: 0; top: 300px; height: 80px; background: rgb(30, 160, 60); }
 </style></head>
 <body>
 <section id="first"><h2>First section</h2><p>Own content</p></section>
 <section id="second"><h2>Second section</h2><p>Pulled up over the first</p></section>
 <section id="third"><h2>Third section</h2><p>Plain</p></section>
+<section id="base"><h2>Base section</h2></section>
+<section id="over"><h2>Over section</h2><p>White text on the base</p></section>
 <div id="cookie"><p>We use cookies</p><button>OK</button></div>
 </body></html>

@@ -133,8 +133,9 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
 
 
 def _covering(run: Path, count: int) -> list[list[str]]:
-    """For each section of report.json (same order), the elements to hide: the top elements of every other
-    section, except those that contain this section (hiding a wrapper would hide the section with it).
+    """For each section of report.json (same order), the elements to hide: the top elements of other
+    sections that are painted in front of it. What is painted behind it stays (a background the section's
+    text is designed to sit on), and so do wrappers that contain it.
     """
     props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
     review = review_mod.load(run)
@@ -142,23 +143,35 @@ def _covering(run: Path, count: int) -> list[list[str]]:
         review = None
     rows, members = section_rows(props, review)
     rows = sorted((r for r in rows if r[3] != "excluded"), key=lambda r: r[4].y)
-    parent = {e.id: e.parent_id for e in ElementSnapshot.model_validate_json((run / "elements.json").read_text()).elements}
+    elements = {e.id: e for e in ElementSnapshot.model_validate_json((run / "elements.json").read_text()).elements}
 
     def tops(ids):
         own = set(ids)
-        return [e for e in ids if parent.get(e) not in own]
+        return [e for e in ids if elements[e].parent_id not in own]
 
     def ancestors(eid):
         out = set()
-        while (eid := parent.get(eid)) is not None:
+        while (eid := elements[eid].parent_id) is not None:
             out.add(eid)
         return out
+
+    def paint_key(eid):
+        # The browser's painting order between two elements, approximately: a higher z-index wins, then a
+        # positioned element over a static one, then the later one in the page.
+        # ponytail: own z-index only; stacking contexts created by ancestors are not followed.
+        style = elements[eid].styles
+        z = int(style.get("zIndex")) if style.get("zIndex", "").lstrip("-").isdigit() else 0
+        return (z, style.get("position", "static") != "static", int(eid[1:]))
 
     roots = [tops(members[r[0]]) for r in rows]
     hide = []
     for i in range(min(count, len(rows))):
         around = set().union(*(ancestors(e) for e in roots[i])) if roots[i] else set()
-        hide.append([e for j, rs in enumerate(roots) if j != i for e in rs if e not in around])
+        mine = [paint_key(e) for e in roots[i]]
+        hide.append([
+            e for j, rs in enumerate(roots) if j != i for e in rs
+            if e not in around and any(paint_key(e) > k for k in mine)  # painted in front of this section
+        ])
     return hide + [[] for _ in range(count - len(hide))]
 
 

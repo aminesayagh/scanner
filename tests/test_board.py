@@ -181,3 +181,14 @@ def test_captures_without_an_offline_copy_fall_back_to_cropping(covered, tmp_pat
     (old / "manifest.json").write_text(json.dumps(manifest))
     assert cli("report", old).exit_code == 0
     assert pixel(first_shot(old, index), 10, 440) == [30, 30, 200]  # a plain crop keeps what covered it
+
+
+
+def test_what_is_painted_behind_a_section_stays_in_its_screenshot(covered):
+    run, _ = covered
+    report = json.loads((run / "report.json").read_text())
+    over = next(i for i, s in enumerate(report["sections"]) if "Over section" in json.dumps(s["message"]))
+    base = next(i for i, s in enumerate(report["sections"]) if "Base section" in json.dumps(s["message"]))
+    assert over != base
+    # The base is painted behind the transparent section: it stays, so the white text keeps its background.
+    assert pixel(first_shot(run, over), 300, 280) == [20, 30, 90]
