@@ -46,6 +46,16 @@ _HIDE = """(css) => {
 }"""
 
 
+_FRAME = """(ids) => {
+  const rects = ids.map((i) => document.querySelector(`[data-ss-id="${i}"]`)).filter(Boolean)
+    .map((n) => n.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+  if (!rects.length) return null;
+  const left = Math.min(...rects.map((r) => r.left)), top = Math.min(...rects.map((r) => r.top));
+  const right = Math.max(...rects.map((r) => r.right)), bottom = Math.max(...rects.map((r) => r.bottom));
+  return { x: left + scrollX, y: top + scrollY, width: right - left, height: bottom - top };
+}"""
+
+
 class Cropper:
     """One browser for many crops of saved screenshots."""
 
@@ -59,9 +69,12 @@ class Cropper:
         self._browser.close()
         self._pw.stop()
 
-    def isolated(self, run: Path, manifest: Manifest, clips: list[dict], hide: list[list[str]]) -> list[bytes | None]:
-        """Screenshots of each clip (CSS px) from the page's offline copy, with the elements in `hide[i]`
-        (element ids) made transparent first: whatever covers section i, but not section i itself.
+    def isolated(
+        self, run: Path, manifest: Manifest, clips: list[dict], plans: list[tuple[list[str], list[str]]]
+    ) -> list[bytes | None]:
+        """Screenshots of each section from the page's offline copy. plans[i] = (the section's top elements,
+        the elements to make transparent first). The section is framed where its own elements are in the
+        copy, which can differ from the capture when scripts sized the page (clips[i] is the fallback).
 
         The copy opens at the captured size and device. Chrome's snapshot keeps no scripts, so the page
         cannot change or randomize itself; hiding by opacity keeps every box where it was.
@@ -78,7 +91,8 @@ class Cropper:
         page = context.new_page()
         page.goto((run / manifest.snapshot).resolve().as_uri(), wait_until="load")
         shots = []
-        for clip, ids in zip(clips, hide):
+        for clip, (roots, ids) in zip(clips, plans):
+            clip = page.evaluate(_FRAME, roots) or clip
             if clip["width"] < 1 or clip["height"] < 1:
                 shots.append(None)
                 continue
@@ -132,10 +146,10 @@ def write_section_shots(run: Path, cropper: Cropper) -> list[Path]:
     return written
 
 
-def _covering(run: Path, count: int) -> list[list[str]]:
-    """For each section of report.json (same order), the elements to hide: the top elements of other
-    sections that are painted in front of it. What is painted behind it stays (a background the section's
-    text is designed to sit on), and so do wrappers that contain it.
+def _covering(run: Path, count: int) -> list[tuple[list[str], list[str]]]:
+    """For each section of report.json (same order): its top elements, and the elements to hide: the top
+    elements of other sections that are painted in front of it. What is painted behind it stays (a
+    background the section's text is designed to sit on), and so do wrappers that contain it.
     """
     props = ProposalSnapshot.model_validate_json((run / "proposals.json").read_text())
     review = review_mod.load(run)
@@ -168,11 +182,11 @@ def _covering(run: Path, count: int) -> list[list[str]]:
     for i in range(min(count, len(rows))):
         around = set().union(*(ancestors(e) for e in roots[i])) if roots[i] else set()
         mine = [paint_key(e) for e in roots[i]]
-        hide.append([
+        hide.append((roots[i], [
             e for j, rs in enumerate(roots) if j != i for e in rs
             if e not in around and any(paint_key(e) > k for k in mine)  # painted in front of this section
-        ])
-    return hide + [[] for _ in range(count - len(hide))]
+        ]))
+    return hide + [([], []) for _ in range(count - len(hide))]
 
 
 # --- board ---------------------------------------------------------------------------------------------

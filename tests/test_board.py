@@ -192,3 +192,30 @@ def test_what_is_painted_behind_a_section_stays_in_its_screenshot(covered):
     assert over != base
     # The base is painted behind the transparent section: it stays, so the white text keeps its background.
     assert pixel(first_shot(run, over), 300, 280) == [20, 30, 90]
+
+
+
+def test_section_is_framed_where_the_offline_copy_lays_it_out(tmp_path):
+    # A script makes the page taller after load (as pinned-scroll libraries do); the copy keeps no scripts,
+    # so everything below sits higher in the copy than in the capture. The shot must still frame the section.
+    page = tmp_path / "scripted.html"
+    page.write_text("""<!doctype html><html><head><meta charset="utf-8"><title>Scripted</title></head>
+      <body style="margin: 0"><div id="spacer"></div>
+      <section style="height: 300px; padding: 20px; background: rgb(20, 120, 20)"><h2>Green</h2></section>
+      <section style="height: 300px; padding: 20px; background: rgb(120, 20, 120)"><h2>Purple</h2></section>
+      <script>
+        // A constructed stylesheet, as some libraries and web components use: not part of the DOM, so the
+        // snapshot does not keep it and the copy lays the page out without it.
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('#spacer { height: 500px; }');
+        document.adoptedStyleSheets = [sheet];
+      </script>
+      </body></html>""")
+    out = tmp_path / "run"
+    assert cli("capture", page.as_uri(), "-o", out, "--width", "1000", "--height", "700").exit_code == 0
+    assert cli("detect", out).exit_code == 0 and cli("report", out).exit_code == 0
+    report = json.loads((out / "report.json").read_text())
+    green = next(i for i, s in enumerate(report["sections"]) if "Green" in json.dumps(s["message"]))
+    assert report["sections"][green]["position"]["y"] == 500  # pushed down by the script at capture
+    assert pixel(first_shot(out, green), 10, 10) == [20, 120, 20]
+    assert pixel(first_shot(out, green), 10, 330) == [20, 120, 20]  # its bottom edge, not the purple below
