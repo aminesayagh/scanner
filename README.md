@@ -281,14 +281,25 @@ product pages become one route, `/product/{segment_2}`, instead of 1,000 entries
 `/about` stay on their own. It infers routes from the URLs it sees. It does not read the site's source
 router and does not prove that every value works. Its output is not an SEO XML sitemap.
 
-The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestones 1 to 5
-are built: discovery from the seed URL, route families, their validation on sampled pages, page roles and
-the export views. Milestone 6 (the remaining fixture scenarios and measurements) is next.
+The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. All six milestones
+are built: discovery from the seed URL, route families, their validation on sampled pages, page roles, the
+export views, and the plan's test scenarios with measurements (see `evaluation/README.md`, "route-map").
 
 ```bash
 uv run route-map https://shop.example/ -o route-map.json --summary route-map.md   # or: python -m route_map ...
 uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json     # a URL list, nothing fetched
 ```
+
+**Worked example** (masayagh.com, default budgets; `--summary` output):
+
+| Route | Status | Role | URLs | Samples |
+| --- | --- | --- | --- | --- |
+| `/contact/?service={service}` | validated_on_sample | contact | 6 | 6 |
+| `/` | individual | home | 1 | 1 |
+| `/contact/` | individual | contact | 1 | 1 |
+
+The six "Start a project" links (`?service=Product discovery`, `?service=Dashboards`, ...) are one
+family: their pages share a template and carry a contact form. The map took 12 requests.
 
 - **Discovery:** the crawler (Scrapy) obeys robots.txt and reads it for `Sitemap:` declarations. If there
   are none, it tries `/sitemap.xml` and `/sitemap_index.xml`, then relies on links.
@@ -297,9 +308,13 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
     (no entity expansion). **Sitemap URLs only go into the inventory**: 1,000 products listed in a sitemap
     cost no page requests.
   - **Pages:** HTML pages are fetched from the seed outward. Half of `--max-html-pages` goes to discovery;
-    the rest goes to validation samples. Each free slot goes to a page whose path shape has not
-    been fetched yet, so one product page is enough to show the product family, and the budget reaches
-    the blog, pages and so on. `--max-depth` bounds how far from the seed links are followed.
+    the rest goes to validation samples. Pages are fetched in waves: a wave is chosen only once every
+    page in flight has answered, so the map does not depend on which response comes back first. A wave
+    takes one waiting page per path shape not fetched yet (one product page is enough to show the product
+    family, so the budget reaches the blog, pages and so on), then a few more members when every shape is
+    known. Ties go to the shallower page, then the URL in sorted order.
+  - **Redirects:** they are recorded, not followed blindly. The old URL keeps a `redirect_to`, the target
+    is queued like any link, and a redirect never takes the crawl to another host. `--max-depth` bounds how far from the seed links are followed.
   - **Never requested:** forms, action links (logout, add to cart, delete, ...), binary assets (images,
     PDFs, fonts, ...), other hosts (listed in `skipped_hosts`; `--include-subdomains` widens this), and
     pages disallowed by robots.txt (`blocked_urls`).
@@ -316,11 +331,12 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
   keys. Duplicates become `aliases` of one URL record.
 - **Families:** URLs of the same shape (host, depth, trailing slash, extension, query keys) that differ in
   exactly one slot become a family once that slot takes at least 3 different values, e.g.
-  `/blog/{segment_2}`, `/p/{segment_2}.html` or `/search?q={q}`. Rules that hold:
+  `/blog/{segment_2}`, `/p/{segment_2}.html` or `/search?q={q}`. When a URL fits two candidates, a varying
+  path segment wins over a query value and the rightmost segment over earlier ones (URLs vary most at their
+  end); then the larger family wins. Rules that hold:
   - `/blog/{slug}` and `/blog/category/{slug}` are different families.
   - Locale prefixes stay separate (`/en/product/...`, `/fr/product/...`).
   - Root pages (`/about`, `/contact`, `/privacy`) are never folded into a catch-all `/{segment_1}`.
-  - When a URL fits two candidates, the larger family claims it.
 - **Validation on samples:** once discovery has nothing left to fetch, each family's planned samples are
   fetched. The plan spreads them over different value shapes (`item-12` and `compare` are different
   shapes), and families take turns so a 1,000-product family cannot use up the budget. Pages fetched
@@ -360,7 +376,8 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
     `/blog/...`, `/cart`).
   - **`unknown`:** no cue, an unresolved family, or two supported roles that contradict each other (the
     reason is given). Two overlaps are settled on purpose: a product page with a related-products grid
-    stays a product page, and a search page listing products is `search_results`.
+    stays a product page, and a search page listing products is `search_results`. An exception split off
+    a family (`/product/compare`) does not take a role from its URL words: they describe the family.
 - **Parameter names:** a parameter is renamed after its route's role only when that role is `supported`:
   `{product_slug}` or `{product_id}`, `{article_slug}` or `{article_id}`, `{category_slug}` for listings.
   Otherwise it keeps its neutral name (`{segment_2}`).
@@ -379,6 +396,16 @@ uv run route-map https://shop.example/ --inventory urls.txt -o route-map.json   
     limitations.
 - **Summary:** `--summary FILE` also writes a Markdown table of the routes (status, role, URL and sample
   counts, examples), their exceptions, and why the map is partial if it is. Its IDs and ordering depend only on the set of URLs, not on their order.
-- **Not yet:** one variable slot per family, so nested routes such as `/category/{a}/page/{b}` are not
-  inferred. On a Shopify shop, for example, `/collections/<name>/products/<slug>` gives one family per
-  collection.
+- **Limits (heuristics, see also `notice.md`):**
+  - **One variable slot per family:** nested routes such as `/category/{a}/page/{b}` are not inferred. On a
+    Shopify shop, `/collections/<name>/products/<slug>` gives one family per collection, which also
+    spreads the sample budget thin.
+  - **No rendering:** pages are read as served HTML. A JavaScript shell (a seed page without links) is
+    reported, not rendered, and hash-router URLs are flagged, not followed.
+  - **Word lists:** action links are skipped by URL words, so `/product/remove-tool` would be skipped too.
+    Error-page titles, purchase and checkout buttons and the role URL words cover English plus a few
+    French and German phrases.
+  - **No pagination naming:** a numeric segment keeps a neutral name. There is no pagination evidence
+    (such as `rel=next`) yet.
+  - **Structure threshold:** 50% overlap of main-content structure decides whether two pages share a
+    template. It was tuned on fixtures, not proven on every site.

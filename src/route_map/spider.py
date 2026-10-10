@@ -5,8 +5,6 @@ Two phases share the page budget. Discovery fetches pages from the seed outward 
 When it runs dry, validation fetches each family's planned samples, then a few more for families whose
 samples disagreed, with what is left."""
 
-import heapq
-import itertools
 from urllib.parse import urljoin, urlsplit
 
 from scrapy import Request, Spider, signals
@@ -22,6 +20,10 @@ from .inference import families, records_from
 from .models import Config, PageObservation
 from .normalization import Rejected, normalize, url_id
 from .validation import plan_extra, plan_samples
+
+
+WAVE_OF_KNOWN_SHAPES = 4
+REDIRECTS = [301, 302, 303, 307, 308]
 
 
 class DiscoverySpider(Spider):
@@ -46,8 +48,7 @@ class DiscoverySpider(Spider):
         self.sitemaps: set[str] = set()
         self.pages: set[str] = set()  # requested (each uses one slot of the page budget)
         self.queued: set[str] = set()
-        self.frontier: list[tuple] = []  # (shape already fetched, order, url, depth)
-        self.order = itertools.count()
+        self.frontier: list[tuple[str, int]] = []  # (url, depth) waiting for a wave
         self.shapes: set[tuple] = set()
         self.observations: list[PageObservation] = []
         self.redirects: dict[str, str] = {}
@@ -63,7 +64,7 @@ class DiscoverySpider(Spider):
         yield Request(urljoin(self.seed, "/robots.txt"), self.parse_robots, errback=self.robots_failed,
                       meta={"dont_obey_robotstxt": True}, priority=100, dont_filter=True)
         self.enqueue(self.seed, 0)
-        for request in self.dispatch():
+        for request in self.wave():
             yield request
 
     def add(self, url: str, source: str) -> bool:
@@ -85,7 +86,7 @@ class DiscoverySpider(Spider):
         return True
 
     def enqueue(self, url: str, depth: int) -> None:
-        """A page waiting for a slot of the page budget (each slot goes to the best waiting page)."""
+        """A page waiting for a discovery wave."""
         try:
             crawl = normalize(url)["crawl_url"]
         except Rejected:
@@ -95,21 +96,37 @@ class DiscoverySpider(Spider):
         if not host_allowed(urlsplit(crawl).hostname, self.host, self.config.include_subdomains):
             return
         self.queued.add(crawl)
-        heapq.heappush(self.frontier, (path_shape(crawl) in self.shapes, next(self.order), crawl, depth))
+        self.frontier.append((crawl, depth))
 
-    def dispatch(self):
-        """Requests for waiting pages while the budget lasts: path shapes not fetched yet first (one more
-        member of a known family teaches little), then in discovery order."""
-        while self.frontier and len(self.pages) < self.page_budget:
-            known, n, crawl, depth = heapq.heappop(self.frontier)
-            if known != (path_shape(crawl) in self.shapes):  # its shape was fetched meanwhile
-                heapq.heappush(self.frontier, (True, n, crawl, depth))
-                continue
+    def wave(self) -> list[Request]:
+        """The next wave of discovery pages, chosen once every page in flight has answered, so the choice
+        does not depend on which response came back first. A wave takes one waiting page per path shape
+        not fetched yet (one member of a family is enough to show it); when every waiting shape is known,
+        it takes a few more members. Ties go to the shallower page, then the URL in sorted order.
+        # ponytail: waves wait for the slowest page of each round; fine for a bounded crawl.
+        """
+        waiting = sorted(self.frontier, key=lambda item: (item[1], item[0]))  # (url, depth)
+        picked, shapes = [], set(self.shapes)
+        for crawl, depth in waiting:
+            if path_shape(crawl) not in shapes:
+                shapes.add(path_shape(crawl))
+                picked.append((crawl, depth))
+        if not picked:
+            picked = waiting[:WAVE_OF_KNOWN_SHAPES]
+        picked = picked[: max(0, self.page_budget - len(self.pages))]
+        for crawl, depth in picked:
+            self.frontier.remove((crawl, depth))
             self.pages.add(crawl)
             self.shapes.add(path_shape(crawl))
-            yield Request(crawl, self.parse_page, errback=self.failed_page, meta={"route_depth": depth})
-        if self.frontier:
+        if self.frontier and len(self.pages) >= self.page_budget:
             self.stop_reasons.add("discovery page budget reached")
+        return [self.page_request(crawl, depth) for crawl, depth in picked]
+
+    def page_request(self, url: str, depth: int) -> Request:
+        # Redirects come back as responses: recorded as an alias, the target queued like any link, and never
+        # followed to another host.
+        return Request(url, self.parse_page, errback=self.failed_page, dont_filter=True,
+                       meta={"route_depth": depth, "dont_redirect": True, "handle_httpstatus_list": REDIRECTS})
 
     def sitemap(self, url: str) -> Request | None:
         if url in self.sitemaps:
@@ -157,7 +174,12 @@ class DiscoverySpider(Spider):
         self.sitemap_results.append({"url": failure.request.url, "error": f"HTTP {status}" if status else repr(failure.value)})
 
     def idle(self):
-        """Nothing left to fetch: move to the next phase (samples, then extra samples), or let the crawl end."""
+        """Nothing in flight: the next discovery wave, else the next phase (samples, then extra samples), or
+        the end of the crawl."""
+        if self.phase == "discovery" and (requests := self.wave()):
+            for request in requests:
+                self.crawler.engine.crawl(request)
+            raise DontCloseSpider
         while self.phase != "extra samples":
             records, _ = records_from(sorted(self.pairs), self.config, self.seed)
             candidates = families(records, self.config)
@@ -177,8 +199,7 @@ class DiscoverySpider(Spider):
             if picked:
                 for uid in picked:
                     self.samples.add(by_id[uid].crawl_url)
-                    self.crawler.engine.crawl(Request(by_id[uid].crawl_url, self.parse_page, errback=self.failed_page,
-                                                      meta={"route_depth": self.config.max_depth}, dont_filter=True))
+                    self.crawler.engine.crawl(self.page_request(by_id[uid].crawl_url, self.config.max_depth))
                 raise DontCloseSpider  # Scrapy checks idleness again a few seconds later
             # Nothing to fetch in this phase: try the next one now rather than after another idle wait.
 
@@ -186,13 +207,17 @@ class DiscoverySpider(Spider):
         return url_id(normalize(url, tracking=self.config.tracking_parameters)["comparison_key"])
 
     def parse_page(self, response):
-        requested, final = response.request.meta.get("redirect_urls", [response.url])[0], response.url
-        if final != requested:
-            self.redirects[requested] = final
-        if not host_allowed(urlsplit(final).hostname, self.host, self.config.include_subdomains):
-            self.skipped.add(urlsplit(final).hostname)
+        requested = final = response.url
+        if response.status in REDIRECTS:
+            location = response.headers.get(b"Location", b"").decode("latin-1")
+            target = response.urljoin(location) if location else None
             self.observations.append(PageObservation(url_id=self.observation_id(requested), fetch_result="ok",
-                                                     status=response.status, final_url=final))
+                                                     status=response.status, final_url=target))
+            if target:
+                self.redirects[requested] = target
+                self.add(target, f"redirect:{requested}")
+                if self.phase == "discovery":
+                    self.enqueue(target, response.meta["route_depth"])
             return
         self.add(requested, "page")
         if b"html" not in response.headers.get(b"Content-Type", b"text/html").lower():
@@ -219,7 +244,6 @@ class DiscoverySpider(Spider):
         ))
         if normalize(final)["crawl_url"] == self.seed and not links:
             self.limitations.append("the seed page has no links in its HTML: it may be a JavaScript shell (not rendered in this version)")
-        yield from self.dispatch()
 
     def failed_page(self, failure):
         blocked = failure.check(IgnoreRequest) and not failure.check(HttpError)  # disallowed by robots.txt
@@ -228,7 +252,6 @@ class DiscoverySpider(Spider):
         self.observations.append(PageObservation(url_id=self.observation_id(failure.request.url),
                                                  fetch_result="blocked" if blocked else "failed", status=status,
                                                  error=str(failure.value)[:200]))
-        yield from self.dispatch()  # the slot is spent; keep the crawl going
 
     def closed(self, reason):
         self.counts["requests_used"] = self.crawler.stats.get_value("downloader/request_count", 0)

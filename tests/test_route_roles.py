@@ -158,3 +158,9 @@ def test_a_cue_on_a_minority_of_samples_does_not_beat_url_words():
     family = next(r for r in result.routes if r.pattern.startswith("/pages/{"))
     assert family.discovered_url_count == 5  # the contact page is a member, its form a minority cue
     assert (family.role, family.role_certainty) == ("informational", "weak")
+
+
+def test_an_exception_does_not_take_its_role_from_the_family_url_words():
+    products = [f"{BASE}/product/item-{n}" for n in range(6)] + [f"{BASE}/product/compare"]
+    result = run(products, [seen(u, product(n)) for n, u in enumerate(products[:3])] + [seen(products[-1], COMPARE)])
+    assert route(result, products[-1]).role == "unknown"
