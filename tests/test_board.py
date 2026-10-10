@@ -115,3 +115,14 @@ def test_board_default_collects_each_page_once_from_runs(runs, tmp_path, monkeyp
     result = cli("board")
     assert result.exit_code == 0 and "2 pages" in result.output  # the older folder is left out
     assert (root.parent / "boards" / "sections.excalidraw").exists()
+
+
+def test_each_breakpoint_column_is_cropped_from_its_own_screenshot(runs, tmp_path):
+    _, _, site = runs
+    out = tmp_path / "board.excalidraw"
+    assert cli("board", site, "-o", out).exit_code == 0
+    scene = json.loads(out.read_text())
+    label = next(e for e in scene["elements"] if e["id"].startswith("page0-mobile-s") and "#app" in e.get("text", ""))
+    image = next(e for e in scene["elements"] if e["id"] == label["id"].removesuffix("-note"))
+    png = base64.b64decode(scene["files"][image["fileId"]]["dataURL"].split(",", 1)[1])
+    assert pixel(png, 3, 3) == [230, 230, 255]  # the mobile-only section's own background
