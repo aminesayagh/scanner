@@ -273,3 +273,42 @@ configuration.
 - **Splitting and adjusting:** only flow sections can be split or adjusted. Content crossing a cut
   needs an explicit `crossing=` choice.
 - **Single reviewer:** there's no locking, so don't review the same run from two terminals at once.
+
+## route-map: a site's route families
+
+A second command in this repo. It turns one website into a compact map of **route families**: 1,000
+product pages become one route, `/product/{segment_2}`, instead of 1,000 entries. Single pages such as
+`/about` stay on their own. It infers routes from the URLs it sees. It does not read the site's source
+router and does not prove that every value works. Its output is not an SEO XML sitemap.
+
+The plan is `vault/AI-Memory/02_projects/quickshop/sitemap-route-generator-plan.md`. Milestone 1 (built)
+maps a list of URLs offline. Discovery from the seed URL alone (robots.txt, sitemaps, links), validation
+on sampled pages and page roles are the next milestones.
+
+```bash
+uv run route-map https://shop.test/ --inventory urls.txt -o route-map.json   # or: python -m route_map ...
+```
+
+- **Input:** `--inventory` is a text file with one URL per line (`#` lines are skipped). URLs on another
+  host than the seed, or that are not HTTP(S), are listed under `crawl_report.rejected_urls`.
+- **URL identity (conservative):** the scheme, default ports, ordinary `#anchors` and tracking parameters
+  (`utm_*`, `gclid`, `fbclid`, ...) are ignored. Everything else is kept as written: path case, `%2F`,
+  extensions, the trailing slash, and unknown query parameters with their order, blank values and repeated
+  keys. Duplicates become `aliases` of one URL record.
+- **Families:** URLs of the same shape (host, depth, trailing slash, extension, query keys) that differ in
+  exactly one slot become a family once that slot takes at least 3 different values, e.g.
+  `/blog/{segment_2}`, `/p/{segment_2}.html` or `/search?q={q}`. Rules that hold:
+  - `/blog/{slug}` and `/blog/category/{slug}` are different families.
+  - Locale prefixes stay separate (`/en/product/...`, `/fr/product/...`).
+  - Root pages (`/about`, `/contact`, `/privacy`) are never folded into a catch-all `/{segment_1}`.
+  - When a URL fits two candidates, the larger family claims it.
+- **Status:** without page validation, every family is `provisional` (a structural hypothesis), and its
+  members include possible exceptions such as `/product/compare` until sampled pages are compared. URLs in
+  no family are `individual`. Each family carries a stable sample plan (`sample_ids`, spread over different
+  value shapes) for validation.
+- **Output:** versioned JSON (`schema_version`) holding `routes` (each with at most 3 `examples`), `urls`
+  (the full inventory, each with its `route_id`) and `crawl_report` (budgets, rejected URLs, limitations
+  such as hash-router URLs). Its IDs and ordering depend only on the set of URLs, not on their order.
+- **Not yet:** one variable slot per family, so nested routes such as `/category/{a}/page/{b}` are not
+  inferred. Parameters have neutral names (`segment_2`); role-based names such as `product_slug` come with
+  page roles.
