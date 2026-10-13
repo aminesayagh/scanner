@@ -28,11 +28,15 @@ def main(
     max_depth: int = typer.Option(4),
     deadline_seconds: int = typer.Option(300, help="Stop discovery after this many seconds."),
     include_subdomains: bool = typer.Option(False, help="Also follow subdomains of the seed's host."),
+    templates: bool = typer.Option(Config.model_fields["templates"].default,
+                                   help="Keep sampling families while their pages show new templates."),
+    saturation_window: int = typer.Option(Config.model_fields["saturation_window"].default, help="Pages in a row that must add no new template before a family counts as saturated."),
 ) -> None:
     try:
         config = Config(max_discovered_urls=max_discovered_urls, max_html_pages=max_html_pages,
                         samples_per_family=samples_per_family, max_sitemap_files=max_sitemap_files, max_depth=max_depth,
-                        deadline_seconds=deadline_seconds, include_subdomains=include_subdomains)
+                        deadline_seconds=deadline_seconds, include_subdomains=include_subdomains, templates=templates,
+                        saturation_window=saturation_window)
     except ValidationError as e:
         raise typer.BadParameter("; ".join(f"--{'-'.join(str(x) for x in err['loc']).replace('_', '-')}: {err['msg']}" for err in e.errors()))
     if inventory is not None:

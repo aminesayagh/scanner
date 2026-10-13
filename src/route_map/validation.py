@@ -10,8 +10,14 @@ Jaccard overlap of their main-content structure; samples whose structured data n
 - none, with enough usable samples: unresolved, observed pages kept individually;
 - too few usable samples: still provisional.
 A redirected or failed sample is not evidence against its family: it is set aside, never collapses it.
+
+After validation, families keep being sampled while their pages show templates not seen yet anywhere on the
+site (plan_templates), so a blog whose posts use many layouts gets each layout found, as far as the budget
+allows, while one whose posts share a layout stops early.
 """
 
+import hashlib
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 
 from .features import ROLE_TYPES
@@ -25,6 +31,18 @@ def unusable_reason(obs: PageObservation, record: URLRecord) -> str | None:
     if obs.final_url and normalize(obs.final_url)["crawl_url"] != record.crawl_url:
         return "redirected"
     return None
+
+
+def usable_pages(observations: Iterable[PageObservation], records: dict[str, URLRecord]) -> dict[str, PageObservation]:
+    """Checked pages that can hold a template: fetched, with a skeleton, not an error page or a redirect."""
+    return {o.url_id: o for o in observations
+            if o.url_id in records and o.features and unusable_reason(o, records[o.url_id]) is None}
+
+
+def site_clusters(usable: dict[str, PageObservation], config: Config) -> list[list[str]]:
+    """The site's templates: usable pages grouped by skeleton, whatever their URL (see templates.py)."""
+    return clusters([(u, set(o.features), frozenset(set(o.structured_data_types) & ROLE_TYPES)) for u, o in usable.items()],
+                    config.similarity_threshold)
 
 
 def jaccard(a: set, b: set) -> float:
@@ -104,3 +122,44 @@ def plan_extra(candidates: list[RouteCandidate], observations: dict[str, PageObs
         if judge(c.member_ids, observations, records, config).wants_more:
             queues.append([u for u in c.sample_ids + c.extra_sample_ids if u not in observations][: config.extra_samples])
     return round_robin(queues, budget)
+
+
+def template_queues(candidates: list[RouteCandidate], records: list[URLRecord], observations: dict[str, PageObservation],
+                    config: Config, state: dict[str, tuple[int, int, int]], skip: Collection[str] = ()
+                    ) -> tuple[list[tuple[RouteCandidate, list[str]]], list[str]]:
+    """Families still showing new templates, each with its unchecked members in fetch order, and the unchecked
+    URLs in no family (neither in `skip`). Updates `state`, the caller's {pattern: (templates touched, quiet, checked)}: `quiet`
+    counts checked pages since the family last touched a site-wide template it had not touched before; at
+    `saturation_window` the family is saturated. A family validated on one template without exceptions is
+    saturated from the start. Calling it again without new observations changes nothing."""
+    by_id = {r.id: r for r in records}
+    usable = usable_pages(observations.values(), by_id)
+    home = {u: n for n, members in enumerate(site_clusters(usable, config)) for u in members}
+    window, out, grouped = config.saturation_window, [], set()
+    for c in sorted(candidates, key=lambda c: (-len(c.member_ids), c.pattern)):
+        grouped.update(c.member_ids)
+        checked = sum(u in observations for u in c.member_ids)
+        touched = len({home[u] for u in c.member_ids if u in home})
+        if c.pattern not in state:
+            outcome = judge(c.member_ids, observations, by_id, config)
+            settled = outcome.kind == "validated" and len(outcome.templates) == 1 and not outcome.exceptions
+            state[c.pattern] = (touched, window if settled else 0, checked)
+        else:
+            before, quiet, seen = state[c.pattern]
+            state[c.pattern] = (touched, 0 if touched > before else quiet + checked - seen, checked)
+        if state[c.pattern][1] >= window:
+            continue
+        rest = sorted(c.member_ids, key=lambda u: hashlib.sha1(u.encode()).hexdigest())
+        queue = [u for u in dict.fromkeys(c.sample_ids + c.extra_sample_ids + rest) if u not in observations and u not in skip]
+        if queue:
+            out.append((c, queue))
+    single = [r.id for r in records if r.id not in grouped and r.id not in observations and r.id not in skip]
+    return out, single
+
+
+def plan_templates(candidates: list[RouteCandidate], records: list[URLRecord], observations: dict[str, PageObservation],
+                   config: Config, state: dict[str, tuple[int, int, int]], budget: int, skip: Collection[str] = ()) -> list[str]:
+    """The next round of template sampling: up to `saturation_window` unchecked members of each family still
+    showing new templates, then each unchecked URL in no family, taken in turn."""
+    families, single = template_queues(candidates, records, observations, config, state, skip)
+    return round_robin([q[: config.saturation_window] for _, q in families] + [[u] for u in single], budget)

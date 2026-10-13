@@ -27,6 +27,8 @@ class Config(BaseModel):
     similarity_threshold: float = Field(0.5, gt=0, le=1)  # Jaccard overlap of main-content structure
     min_agreeing_samples: int = Field(3, ge=1)  # before a family is validated on its sample
     extra_samples: int = Field(3, ge=0)  # requested for a family whose samples disagree
+    templates: bool = True  # after validation, keep sampling families while their pages show new templates
+    saturation_window: int = Field(5, ge=1)  # pages in a row that must add no new template before a family counts as saturated
     tracking_parameters: list[str] = Field(default_factory=lambda: [
         "utm_*", "gclid", "dclid", "fbclid", "msclkid", "yclid", "mc_cid", "mc_eid", "_ga", "_gl",
     ])

@@ -1,9 +1,10 @@
 """The Scrapy spider behind `discovery.discover`: an explicit scheduler for robots.txt, sitemaps and a
 bounded set of pages. Sitemap entries are collected, never scheduled as page requests.
 
-Two phases share the page budget. Discovery fetches pages from the seed outward (half the budget at most).
+Phases share the page budget. Discovery fetches pages from the seed outward (half the budget at most).
 When it runs dry, validation fetches each family's planned samples, then a few more for families whose
-samples disagreed, with what is left."""
+samples disagreed, then (with `Config.templates`) rounds of pages from families still showing new templates
+and pages in no family, with what is left."""
 
 from urllib.parse import urljoin, urlsplit
 
@@ -19,7 +20,7 @@ from .features import observe
 from .inference import families, records_from
 from .models import Config, PageObservation
 from .normalization import Rejected, normalize, url_id
-from .validation import plan_extra, plan_samples
+from .validation import plan_extra, plan_samples, plan_templates, template_queues
 
 
 WAVE_OF_KNOWN_SHAPES = 4
@@ -37,8 +38,10 @@ class DiscoverySpider(Spider):
 
     def __init__(self, seed: str, config: Config, page_budget: int, **kwargs):
         super().__init__(**kwargs)
-        self.phase = "discovery"  # then "samples", then "extra samples"
+        self.phase = "discovery"  # then "samples", "extra samples" and "templates"
         self.samples: set[str] = set()
+        self.saturation: dict[str, tuple[int, int, int]] = {}  # family pattern -> plan_templates state
+        self.reach: dict[str, int] = {}  # URL id -> the shallowest depth it was found at (sitemaps: 0)
         self.seed = normalize(seed)["crawl_url"]
         self.config, self.page_budget = config, page_budget
         self.host = urlsplit(self.seed).hostname
@@ -168,40 +171,82 @@ class DiscoverySpider(Spider):
                     yield request
             elif not self.add(urljoin(response.url, loc), f"sitemap:{response.url}"):
                 break
+            else:
+                self.reached(urljoin(response.url, loc), 0)
 
     def sitemap_failed(self, failure):
         status = failure.value.response.status if failure.check(HttpError) else None
         self.sitemap_results.append({"url": failure.request.url, "error": f"HTTP {status}" if status else repr(failure.value)})
 
     def idle(self):
-        """Nothing in flight: the next discovery wave, else the next phase (samples, then extra samples), or
-        the end of the crawl."""
+        """Nothing in flight: the next discovery wave, else the next phase (samples, extra samples, then
+        rounds of template sampling until none is planned), or the end of the crawl."""
         if self.phase == "discovery" and (requests := self.wave()):
             for request in requests:
                 self.crawler.engine.crawl(request)
             raise DontCloseSpider
-        while self.phase != "extra samples":
-            records, _ = records_from(sorted(self.pairs), self.config, self.seed)
-            candidates = families(records, self.config)
-            observed = {o.url_id: o for o in self.observations}
-            by_id = {r.id: r for r in records}
-            budget = self.config.max_html_pages - len(self.pages) - len(self.samples)
-            self.phase = "samples" if self.phase == "discovery" else "extra samples"
-
-            def plan(limit):
-                if self.phase == "samples":
-                    return plan_samples(candidates, set(observed), limit, self.config.samples_per_family)
-                return plan_extra(candidates, observed, by_id, self.config, limit)
-
-            picked = plan(max(budget, 0))
-            if len(plan(10**9)) > len(picked):
-                self.stop_reasons.add("page budget ran out during validation: some families stay provisional")
-            if picked:
-                for uid in picked:
-                    self.samples.add(by_id[uid].crawl_url)
-                    self.crawler.engine.crawl(self.page_request(by_id[uid].crawl_url, self.config.max_depth))
-                raise DontCloseSpider  # Scrapy checks idleness again a few seconds later
+        while self.phase != "templates":
+            if self.phase == "extra samples" and not self.config.templates:
+                return
+            self.phase = {"discovery": "samples", "samples": "extra samples", "extra samples": "templates"}[self.phase]
+            if self.phase != "templates":
+                self.validate()
             # Nothing to fetch in this phase: try the next one now rather than after another idle wait.
+        self.sample_templates()
+
+    def planning(self):
+        records, _ = records_from(sorted(self.pairs), self.config, self.seed)
+        observed = {o.url_id: o for o in self.observations}
+        budget = max(self.config.max_html_pages - len(self.pages) - len(self.samples), 0)
+        return records, families(records, self.config), observed, {r.id: r for r in records}, budget
+
+    def fetch(self, picked: list[str], by_id: dict) -> None:
+        for uid in picked:
+            self.samples.add(by_id[uid].crawl_url)
+            self.crawler.engine.crawl(self.page_request(by_id[uid].crawl_url, self.config.max_depth))
+        raise DontCloseSpider  # Scrapy checks idleness again a few seconds later
+
+    def validate(self) -> None:
+        """Samples, or extra samples: fetched (DontCloseSpider) unless there is nothing to fetch."""
+        _, candidates, observed, by_id, budget = self.planning()
+
+        def plan(limit):
+            if self.phase == "samples":
+                return plan_samples(candidates, set(observed), limit, self.config.samples_per_family)
+            return plan_extra(candidates, observed, by_id, self.config, limit)
+
+        picked = plan(budget)
+        if len(plan(10**9)) > len(picked):
+            self.stop_reasons.add("page budget ran out during validation: some families stay provisional")
+        if picked:
+            self.fetch(picked, by_id)
+
+    def sample_templates(self) -> None:
+        """One round of template sampling (DontCloseSpider), or the end of the crawl, with a stop reason for
+        each family the budget left open. Not planned: pages requested without an observation (not HTML), and
+        pages in no family found only deeper than max_depth (links of sample pages, as in discovery)."""
+        records, candidates, observed, by_id, budget = self.planning()
+        requested, grouped = self.pages | self.samples, {u for c in candidates for u in c.member_ids}
+        skip = {r.id for r in records if (r.crawl_url in requested and r.id not in observed)
+                or (r.id not in grouped and self.reach.get(r.id, 0) > self.config.max_depth)}
+        if budget:
+            if picked := plan_templates(candidates, records, observed, self.config, self.saturation, budget, skip):
+                self.fetch(picked, by_id)
+            return
+        open_families, single = template_queues(candidates, records, observed, self.config, self.saturation, skip)
+        for c, unchecked in open_families:
+            if len(unchecked) < len(c.member_ids):  # never checked at all: the validation reason covers it
+                self.stop_reasons.add(f"budget ran out while {c.pattern} kept showing new templates: "
+                                      f"{len(unchecked)} of {len(c.member_ids)} members not checked")
+        if single:
+            self.stop_reasons.add(f"budget ran out before {len(single)} individual pages were checked")
+
+    def reached(self, url: str, depth: int) -> None:
+        try:
+            uid = self.observation_id(url)
+        except Rejected:
+            return
+        self.reach[uid] = min(depth, self.reach.get(uid, depth))
 
     def observation_id(self, url: str) -> str:
         return url_id(normalize(url, tracking=self.config.tracking_parameters)["comparison_key"])
@@ -216,6 +261,7 @@ class DiscoverySpider(Spider):
             if target:
                 self.redirects[requested] = target
                 self.add(target, f"redirect:{requested}")
+                self.reached(target, response.meta["route_depth"])
                 if self.phase == "discovery":
                     self.enqueue(target, response.meta["route_depth"])
             return
@@ -233,6 +279,7 @@ class DiscoverySpider(Spider):
             if is_action(crawl) or is_asset(crawl):
                 continue
             self.add(url, f"link:{final}")
+            self.reached(url, response.meta["route_depth"] + 1)
             if host_allowed(urlsplit(crawl).hostname, self.host, self.config.include_subdomains):
                 links.append(crawl)
                 if self.phase == "discovery":  # links of sample pages join the inventory, not the crawl

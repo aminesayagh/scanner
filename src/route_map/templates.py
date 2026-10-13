@@ -11,20 +11,18 @@ the member closest on average to the others, so it is screenshotted once. No net
 from .features import ROLE_TYPES
 from .models import Config, Evidence, PageObservation, RouteRecord, TemplateRecord, URLRecord
 from .normalization import display_path
-from .validation import clusters, jaccard, unusable_reason
+from .validation import jaccard, site_clusters, usable_pages
 
 
 def inventory(records: list[URLRecord], routes: list[RouteRecord], observations: list[PageObservation],
               config: Config) -> list[TemplateRecord]:
     """The site's templates, largest first; sets `template_id` on each placed URL record."""
     by_id = {r.id: r for r in records}
-    usable = {o.url_id: o for o in observations
-              if o.url_id in by_id and o.features and unusable_reason(o, by_id[o.url_id]) is None}
+    usable = usable_pages(observations, by_id)
     features = {u: set(o.features) for u, o in usable.items()}
     # ponytail: clustering compares each page with every member of every template, O(pages² × templates);
     # an inverted index on skeleton paths is the upgrade if crawls grow to many thousands of pages.
-    groups = clusters([(u, features[u], frozenset(set(o.structured_data_types) & ROLE_TYPES)) for u, o in usable.items()],
-                      config.similarity_threshold)
+    groups = site_clusters(usable, config)
 
     def closeness(u, members):  # rounded so that true ties fall to the path, whatever the float order
         return round(sum(jaccard(features[u], features[v]) for v in members if v != u) / max(1, len(members) - 1), 9)
