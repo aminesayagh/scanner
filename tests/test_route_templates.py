@@ -1,5 +1,7 @@
-"""Template skeletons: the inside of a rich-text body counts as one token, the layout around it still counts."""
+"""Template skeletons: the inside of a rich-text body counts as one token, the layout around it still counts.
+Template inventory: every usable checked page of the site grouped by skeleton, whatever its URL."""
 
+import random
 from itertools import combinations
 
 from parsel import Selector
@@ -7,7 +9,11 @@ from parsel import Selector
 from route_map.features import is_rich_text, main_root, observe, structure
 from route_map.validation import jaccard
 
-from test_route_validation import product
+from route_map.export import summary
+from route_map.models import PageObservation
+
+from test_route_roles import CONTACT
+from test_route_validation import COMPARE, by_pattern, product, run, seen, uid
 
 POST = """<html><head><title>{name}</title></head><body><header><nav><a href="/">Home</a><a href="/blog">Blog</a></nav></header>
 <main><article><h1>{name}</h1><p class="meta">By Sara, <time datetime="2026-03-01">March 1</time></p>
@@ -81,3 +87,88 @@ def test_a_card_is_layout_not_body_text():
     card = Selector(text='<div class="card"><img src="/a.jpg"><h3>Title</h3><p>Short text</p></div>').css("div")[0].root
     body = Selector(text="<div><h2>Title</h2><p>One</p><p>Two</p></div>").css("div")[0].root
     assert not is_rich_text(card) and is_rich_text(body)
+
+
+BASE = "https://shop.test"
+HOME = """<html><head><title>Amine</title></head><body><main><section class="hero"><h1>Amine</h1><p>I build shops.</p>
+<a href="/contact/">Talk</a></section><section class="work"><div class="grid"><div class="card"><img src="/1.jpg"><h3>Shop</h3></div>
+<div class="card"><img src="/2.jpg"><h3>Blog</h3></div></div></section></main></body></html>"""
+BLOG_INDEX = """<html><head><title>Blog</title></head><body><main><h1>Blog</h1><ul class="posts">
+<li><a href="/blog/a/"><h2>A</h2></a><p>Short</p></li><li><a href="/blog/b/"><h2>B</h2></a><p>Short</p></li></ul></main></body></html>"""
+INFO = "<html><head><title>{name}</title></head><body><main><h1>T</h1><p>Text</p><p>More text</p></main></body></html>"
+
+
+def template_of(result, url):
+    tid = next(u.template_id for u in result.urls if u.crawl_url == url)
+    return next((t for t in result.templates if t.id == tid), None)
+
+
+def personal_site():
+    """masayagh.com's shape: two posts with one layout, too few to make a URL family."""
+    pages = posts()
+    found = {"/": HOME, "/blog/": BLOG_INDEX, "/blog/shipping-notes/": pages["plain"], "/blog/code-review/": pages["code"],
+             "/contact/": CONTACT}
+    return [BASE + p for p in found], [seen(BASE + p, page) for p, page in found.items()]
+
+
+def test_two_posts_outside_any_family_share_a_template():
+    urls, obs = personal_site()
+    result = run(urls, obs)
+    assert {r.pattern: r.status for r in result.routes} == {p: "individual" for p in
+                                                            ["/", "/blog/", "/blog/shipping-notes/", "/blog/code-review/", "/contact/"]}
+    post = template_of(result, BASE + "/blog/shipping-notes/")
+    assert post is template_of(result, BASE + "/blog/code-review/") and post.id == "template_001"
+    assert post.status == "repeated" and post.checked_page_count == 2 and post.representative == "/blog/code-review/"
+    assert {(e.kind, e.sample_support) for e in post.evidence} == {("skeleton", "2/2"), ("rich_text", "2/2")}
+    assert len(result.templates) == 4 and all(t.status == "single" for t in result.templates[1:])
+    text = summary(result)
+    assert "4 templates." in text and f"| `/blog/code-review/` | repeated | 2 | 0 | {', '.join(post.route_ids)} |" in text
+
+
+def test_one_template_spans_routes():
+    urls = [BASE + "/about", BASE + "/privacy"]
+    result = run(urls, [seen(u, INFO.format(name=u)) for u in urls])
+    [info] = result.templates
+    assert info.route_ids == sorted(r.id for r in result.routes) and len(info.route_ids) == 2
+    assert info.page_ids == sorted(uid(u) for u in urls)
+
+
+def test_a_family_exception_is_its_own_template_and_the_family_counts_its_unsampled_pages():
+    urls = [f"{BASE}/product/item-{n}" for n in range(10)] + [BASE + "/product/compare"]
+    result = run(urls, [seen(u, product(n)) for n, u in enumerate(urls[:5])] + [seen(urls[-1], COMPARE)])
+    family = by_pattern(result)[("/product/{}", None)]
+    products, compare = template_of(result, urls[0]), template_of(result, urls[-1])
+    assert len(result.templates) == 2 and products is not compare
+    assert products.checked_page_count == 5 and products.inferred_page_count == family.inferred_unsampled_url_count == 5
+    assert compare.status == "single" and compare.inferred_page_count == 0
+    assert ("structured_data", "Product") in {(e.kind, e.value) for e in products.evidence}
+    assert all(u.template_id is None for u in result.urls if u.crawl_url in urls[5:10])  # unchecked
+
+
+def test_templates_do_not_depend_on_url_or_observation_order():
+    urls, obs = personal_site()
+    more = [f"{BASE}/product/item-{n}" for n in range(10)] + [BASE + "/product/compare", BASE + "/about", BASE + "/privacy"]
+    urls += more
+    obs += [seen(u, product(n)) for n, u in enumerate(more[:5])] + [seen(more[10], COMPARE)]
+    obs += [seen(u, INFO.format(name=u)) for u in more[11:]]
+    first = run(urls, obs)
+    assert len(first.templates) == 7
+    for seed in range(4):
+        rng = random.Random(seed)
+        u, o = urls[:], obs[:]
+        rng.shuffle(u)
+        rng.shuffle(o)
+        again = run(u, o)
+        assert [t.model_dump() for t in again.templates] == [t.model_dump() for t in first.templates]
+        assert {r.id: r.template_id for r in again.urls} == {r.id: r.template_id for r in first.urls}
+
+
+def test_unusable_pages_are_in_no_template():
+    urls = [f"{BASE}/product/item-{n}" for n in range(8)]
+    obs = [seen(u, product(n)) for n, u in enumerate(urls[:3])]
+    obs.append(seen(urls[3], HOME, final_url=BASE + "/"))  # sent to the home page
+    obs.append(PageObservation(url_id=uid(urls[4]), fetch_result="unsuitable", status=200, title="Page not found"))
+    result = run(urls, obs)
+    [products] = result.templates
+    assert products.page_ids == sorted(uid(u) for u in urls[:3])
+    assert [u.template_id for u in result.urls if u.crawl_url in urls[3:5]] == [None, None]

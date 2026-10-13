@@ -1,12 +1,12 @@
 """Records of a route map, kept separate as the plan asks: URLs, page observations, structural candidates,
-route families and the crawl report. The JSON output is versioned by SCHEMA_VERSION.
+route families, page templates and the crawl report. The JSON output is versioned by SCHEMA_VERSION.
 """
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 RouteStatus = Literal["validated_on_sample", "provisional", "individual", "unresolved"]
 ParameterType = Literal["integer", "uuid", "hex", "slug", "string"]
@@ -50,6 +50,7 @@ class URLRecord(BaseModel):
     # "unresolved": its family's samples did not agree.
     assignment: Literal["assigned", "ambiguous", "unresolved"] = "assigned"
     candidate_route_ids: list[str] = []
+    template_id: str | None = None  # checked pages only (see templates.py); null for unchecked URLs
 
 
 class PageObservation(BaseModel):
@@ -111,6 +112,19 @@ class RouteRecord(BaseModel):
     exception_route_ids: list[str] = []
 
 
+class TemplateRecord(BaseModel):
+    """Checked pages that share a skeleton, whatever their URL (see templates.py)."""
+
+    id: str
+    representative: str  # the member page to screenshot: path, plus ?query when present
+    status: Literal["repeated", "single"]
+    checked_page_count: int
+    inferred_page_count: int = 0  # unsampled members of validated routes whose samples all use it
+    route_ids: list[str]
+    page_ids: list[str]
+    evidence: list[Evidence] = []
+
+
 class CrawlReport(BaseModel):
     budgets: Config
     requests_used: int = 0
@@ -135,6 +149,7 @@ class RouteMap(BaseModel):
     routes: list[RouteRecord]
     urls: list[URLRecord]  # the full inventory, each with its route
     observations: list[PageObservation] = []
+    templates: list[TemplateRecord] = []
     tree: dict = {}  # URL prefix hierarchy: nodes without a route are synthetic groupings, not pages
     links: list[dict] = []  # route-to-route links seen on fetched pages (separate from the prefix tree)
     crawl_report: CrawlReport

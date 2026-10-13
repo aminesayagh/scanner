@@ -100,7 +100,7 @@ def test_cli_maps_an_inventory(tmp_path):
     result = CliRunner().invoke(app, ["https://shop.test/", "--inventory", INVENTORY, "-o", str(out)])
     assert result.exit_code == 0, result.output
     data = json.loads(out.read_text())
-    assert data["schema_version"] == "1"
+    assert data["schema_version"] == "2"
     patterns = {r["pattern"] for r in data["routes"]}
     assert {"/product/{segment_2}", "/blog/{segment_2}", "/blog/category/{segment_3}", "/search?q={q}", "/about"} <= patterns
 

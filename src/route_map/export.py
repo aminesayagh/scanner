@@ -56,7 +56,7 @@ def summary(result: RouteMap) -> str:
     report = result.crawl_report
     families = [r for r in result.routes if r.status != "individual"]
     lines = [f"# Route map of {result.seed or 'an inventory'}", "",
-             f"{len(result.urls)} URLs, {len(result.routes)} routes ({len(families)} families). "
+             f"{len(result.urls)} URLs, {len(result.routes)} routes ({len(families)} families), {len(result.templates)} templates. "
              f"{report.discovery_html} discovery pages and {report.validation_html} sample pages fetched, "
              f"{report.requests_used} requests in all.", ""]
     if report.stop_reasons:
@@ -70,6 +70,10 @@ def summary(result: RouteMap) -> str:
     exceptions = [(r.pattern, r.excluded_literals) for r in result.routes if r.excluded_literals]
     if exceptions:
         lines += ["", "## Exceptions", ""] + [f"- `{p}` leaves out " + ", ".join(f"`{x}`" for x in xs) for p, xs in exceptions]
+    if result.templates:
+        lines += ["", "## Templates", "", "| Representative | Status | Checked | Inferred | Routes |", "| --- | --- | --- | --- | --- |"]
+        lines += [f"| `{t.representative}` | {t.status} | {t.checked_page_count} | {t.inferred_page_count} | {', '.join(t.route_ids)} |"
+                  for t in result.templates]
     if report.limitations:
         lines += ["", "## Limitations", ""] + [f"- {x}" for x in report.limitations]
     return "\n".join(lines) + "\n"
