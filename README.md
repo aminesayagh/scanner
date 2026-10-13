@@ -190,10 +190,9 @@ uv run section-scan classify runs/example --hide-dom-id   # evaluation: same con
   stored separately from Jev's proposal.
 - **Files:** `classification.json` holds the full state (proposals with probabilities, model, status and
   decisions), saved after every step. `report-classified.json` is the report with a compact
-  `classification` per section and for the page: `{"label": …, "confidence": …}`.
-  - The label is your confirmed one, else Jev's proposal; `null` when unresolved or failed.
-  - The confidence is Jev's confidence in that label; `null` when you chose a different label or no
-    request was made.
+  `classification` per section and for the page: `{"label": …}`.
+  - The label is your decision when you made one (`null` when left unresolved), else Jev's proposal;
+    `null` when the request failed. Confidence and probabilities stay in `classification.json`.
 - **Reuse:** proposals are reused only when the input, instructions, registry and requested model all
   match. A decision made on older evidence is dropped.
 - **Page: industry and scope.** After the sections, one request asks two `Choice` questions about the
