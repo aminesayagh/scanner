@@ -3,8 +3,11 @@ signals. Used to check that the sampled pages of a family share one template.
 
 Structure is a set of tag paths (an element with up to two ancestors inside the main content, e.g.
 "ul>li>a"): text, prices, generated ids and how many cards repeat do not change it, while a different
-component does. Scripts, styles and SVG are ignored; without a <main>, [role=main] or <article>, the body
-minus header, nav, footer and aside is used and the evidence is marked weaker ("heuristic").
+component does. The inside of a rich-text block (an element mostly made of paragraphs, headings, lists,
+tables and figures, holding no section or form) counts as one "rich_text" token, so posts with the same
+layout agree whatever their body holds. Scripts, styles and SVG are ignored; without a <main>,
+[role=main] or <article>, the body minus header, nav, footer and aside is used and the evidence is marked
+weaker ("heuristic").
 """
 
 import json
@@ -17,6 +20,7 @@ from .discovery import path_shape
 
 SKIP = {"script", "style", "noscript", "template", "svg", "iframe", "link", "meta"}
 CHROME = {"header", "nav", "footer", "aside"}
+PROSE = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "dl", "blockquote", "pre", "figure", "table", "img", "hr"}
 # Structured-data types that name what a page is about; two samples with different ones are different pages.
 ROLE_TYPES = {"Product", "ProductGroup", "Article", "BlogPosting", "NewsArticle", "Recipe", "Event", "JobPosting",
               "CollectionPage", "SearchResultsPage", "ContactPage", "AboutPage", "FAQPage", "ItemList", "Offer"}
@@ -68,20 +72,37 @@ def main_root(sel: Selector):
     return (body[0].root if body else sel.root), "heuristic"
 
 
-def structure(root, skip_chrome: bool) -> set[str]:
-    out = set()
+def is_rich_text(el) -> bool:
+    """At least three direct children are prose and they make up 70% of them, with no section or form inside
+    (page-builder sections and product forms are layout, not body text)."""
+    tags = [c.tag for c in el if isinstance(c.tag, str) and c.tag not in SKIP]
+    prose = sum(t in PROSE for t in tags)
+    return prose >= 3 and prose >= 0.7 * len(tags) and not el.xpath(".//section | .//form")
+
+
+def _skeleton(root, skip_chrome: bool, collapse_rich_text: bool) -> tuple[set[str], int]:
+    out, blocks = set(), 0
 
     def walk(el, trail):
+        nonlocal blocks
         for child in el:
             tag = child.tag if isinstance(child.tag, str) else None
             if tag is None or tag in SKIP or (skip_chrome and tag in CHROME):
                 continue
             path = (trail + (tag,))[-3:]
             out.add(">".join(path))
-            walk(child, path)
+            if collapse_rich_text and is_rich_text(child):
+                out.add(">".join((path + ("rich_text",))[-3:]))  # the body counts once, not by what it holds
+                blocks += 1
+            else:
+                walk(child, path)
 
-    walk(root, ())
-    return out
+    walk(root, ())  # the root itself is never collapsed: prose directly in <main> keeps its structure
+    return out, blocks
+
+
+def structure(root, skip_chrome: bool, collapse_rich_text: bool = True) -> set[str]:
+    return _skeleton(root, skip_chrome, collapse_rich_text)[0]
 
 
 def signals(sel: Selector, main, url: str) -> list[str]:
@@ -122,9 +143,11 @@ def observe(html: str, url: str) -> dict:
         crumbs = [t.strip() for t in sel.css('nav[aria-label*="readcrumb"] a::text, .breadcrumb a::text').getall() if t.strip()]
     found = signals(sel, main, url)
     canonical = sel.css('link[rel~="canonical"]::attr(href)').get()
+    paths, blocks = _skeleton(main, source == "heuristic", True)
     return {
         "title": (sel.css("title::text").get() or "").strip() or None,
-        "features": sorted(structure(main, source == "heuristic") | {f"signal:{s}" for s in found}),
+        "features": sorted(paths | {f"signal:{s}" for s in found}),
+        "rich_text_blocks": blocks,
         "structured_data_types": types,
         "breadcrumbs": crumbs,
         "signals": found,

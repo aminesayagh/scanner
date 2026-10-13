@@ -58,7 +58,8 @@ class PageObservation(BaseModel):
     status: int | None = None
     final_url: str | None = None
     title: str | None = None
-    features: list[str] = []  # main-content structure features
+    features: list[str] = []  # main-content structure features, rich-text bodies collapsed
+    rich_text_blocks: int = 0  # rich-text blocks collapsed into one token each
     structured_data_types: list[str] = []
     breadcrumbs: list[str] = []
     links: list[str] = []
