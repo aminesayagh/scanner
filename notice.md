@@ -52,3 +52,14 @@ would catch it on the first screen. Small and low impact; revisit with the next 
   `add-to-cart`, `remove` or `delete` are never requested, so a real page such as
   `/product/remove-tool` would be skipped too. A smarter rule would look at the link's context
   (a form button, a `rel` or a `data-` attribute).
+- **Templates: rich-text rule is a heuristic.** A body counts as one `rich_text` token only when it is
+  mostly paragraphs, headings, lists and figures. A large custom component inside a post body (a div
+  pricing table, an embedded form) keeps its structure, so that post may become a template of its own.
+  Revisit with real blogs and page builders.
+- **Templates: saturation is not proof.** A family stops being sampled after 5 pages in a row add no new
+  template, so a layout used by 1 page in 500 can be missed. `stop_reasons` shows the families the
+  budget left open, not the ones that saturated too early.
+- **Templates: served HTML only.** Two layouts that differ only in CSS or in client-side rendering count
+  as one template. Comes with optional rendering.
+- **Templates: 0.5 threshold tuned on fixtures.** The same Jaccard threshold groups pages into templates;
+  a false merge hides a layout from the screenshots. Re-measure on real sites before trusting it.

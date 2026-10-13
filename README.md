@@ -307,7 +307,7 @@ family: their pages share a template and carry a contact form. The map took 12 r
     (no entity expansion). **Sitemap URLs only go into the inventory**: 1,000 products listed in a sitemap
     cost no page requests.
   - **Pages:** HTML pages are fetched from the seed outward. Half of `--max-html-pages` goes to discovery;
-    the rest goes to validation samples. Pages are fetched in waves: a wave is chosen only once every
+    the rest goes to validation samples, then to template sampling (see Templates). Pages are fetched in waves: a wave is chosen only once every
     page in flight has answered, so the map does not depend on which response comes back first. A wave
     takes one waiting page per path shape not fetched yet (one product page is enough to show the product
     family, so the budget reaches the blog, pages and so on), then a few more members when every shape is
@@ -418,3 +418,54 @@ family: their pages share a template and carry a contact form. The map took 12 r
     (such as `rel=next`) yet.
   - **Structure threshold:** 50% overlap of main-content structure decides whether two pages share a
     template. It was tuned on fixtures, not proven on every site.
+
+### Templates
+
+A **template** is a page layout: the checked pages whose main content has the same skeleton, whatever their
+URL. A **route** groups URLs by pattern. The two are independent:
+
+- **A template can span routes:** `/about` and `/privacy` built on one layout are one template over two
+  routes, and so are a collection page and a search page that render the same product grid.
+- **A route can hold several templates:** a provisional family whose few checked pages differ.
+
+The purpose is screenshots: `templates` lists every layout seen on the site with one `representative` URL
+(the member closest on average to the others), so section-scan captures each layout once. A false merge
+(two layouts in one template) hides a layout; a false split only costs one extra screenshot. The rules lean
+towards splitting.
+
+- **Skeleton:** the same tag paths as validation, with one change. A **rich-text block** counts as one
+  `rich_text` token, whatever it holds, so two posts on the same layout agree even when their bodies differ.
+  - **What counts as rich text:** an element with at least 3 prose children (paragraphs, headings, lists,
+    tables, figures, images), at least 2 of them `p`, prose making up at least 70% of its children, and no
+    `section` or `form` inside. The main-content root itself is never collapsed.
+  - **Why cards stay layout:** a product card (`img`, `h3`, one `p`) has one paragraph, so it is not rich
+    text. A different card is a different template, and it should get its own screenshot.
+- **Clustering:** every usable checked page of the site is grouped by skeleton, with the same 50% rule and
+  JSON-LD check as validation. A page that failed, redirected or read as an error page has no template.
+- **Templates phase:** after validation, the rest of the page budget keeps fetching unchecked members of
+  each family while that family's pages touch templates not seen before anywhere on the site.
+  - **Saturation:** a family is saturated once `--saturation-window` checked pages in a row (5 by default)
+    add no new template. A family validated on one template, with no exceptions, is saturated from the
+    start, so a 1,000-product shop spends nothing more on products.
+  - **Single pages:** each URL in no family is checked once.
+  - **Budget:** families take turns, up to one window of pages each per round. When the budget runs out,
+    `stop_reasons` names each family still showing new templates (with how many members were not checked)
+    and how many individual pages were never checked.
+  - **Options:** `--templates` (the default) runs this phase; `--no-templates` stops after validation, and
+    the inventory then covers only the pages already fetched.
+- **Output (`schema_version` "2"):**
+  - `templates`: each with an `id`, its `representative`, a `status` (`repeated` or `single`),
+    `checked_page_count`, `inferred_page_count` (unsampled members of a validated route whose samples all
+    use this template), its `route_ids`, `page_ids` and `evidence` (`skeleton`, `rich_text`,
+    `structured_data`);
+  - `urls[].template_id`: set on checked pages only. Unchecked URLs have no template;
+  - `observations[].rich_text_blocks`: how many rich-text blocks were collapsed on that page;
+  - the `--summary` file adds a Templates table.
+- **Limits:**
+  - **No rendering:** the skeleton is read from served HTML, not from what the browser paints. Two layouts
+    that differ only in CSS are one template.
+  - **The rich-text rule is a heuristic:** a large custom component inside a post body (a pricing table
+    built from divs, an embedded form) is not collapsed, so that post may count as a new template.
+  - **Saturation is not proof:** a layout used by 1 page in 500 can be missed when no sampled page uses it.
+    The stop reasons show where the budget ended before a family settled.
+  - **The 50% threshold** was tuned on fixtures, not proven on every site.

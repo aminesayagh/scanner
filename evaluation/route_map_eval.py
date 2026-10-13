@@ -5,6 +5,7 @@
 Measures, per page budget: pairwise grouping precision/recall, false merges and splits, singleton
 preservation, role accuracy on supported roles (weak/unknown counted apart), discovery coverage, page
 requests per validated family, and whether two crawls answered in a different order give the same map.
+Templates: found against true, false merges and splits over the checked pages, page requests per template found.
 """
 
 import json
@@ -41,6 +42,16 @@ def truth():
             "/contact": ("/contact", "contact"), "/cart": ("/cart", "cart"), "/account/login": ("/account/login", "authentication"),
             "/product/compare": ("/product/compare", None)}
     return out
+
+
+# Families whose pages render one shared layout (see site_routes): about and privacy use INFO; collections, blog
+# categories and search pages all use the same `listing` page. Every other family is its own template.
+SHARED_TEMPLATES = {"/about": "info", "/privacy": "info", "collection": "listing", "blog_category": "listing",
+                    "search": "listing"}
+
+
+def true_template(family):
+    return SHARED_TEMPLATES.get(family, family)
 
 
 def site_routes(base):
@@ -116,6 +127,25 @@ def measure(data, t):
         "pages": report["discovery_html"] + report["validation_html"],
         "per_family": (report["discovery_html"] + report["validation_html"]) / validated if validated else None,
         "validated": validated,
+        **template_measures(data, urls, t),
+    }
+
+
+def template_measures(data, urls, t):
+    """Over the checked pages (those with a template): a false merge is a found template holding pages of two true
+    templates; a false split is a true template whose checked pages sit in two found templates."""
+    checked = [(u["template_id"], true_template(t[path_of(u["crawl_url"])][0])) for u in urls if u["template_id"]]
+    by_found, by_true = {}, {}
+    for found, true in checked:
+        by_found.setdefault(found, set()).add(true)
+        by_true.setdefault(true, set()).add(found)
+    pages = data["crawl_report"]["discovery_html"] + data["crawl_report"]["validation_html"]
+    return {
+        "templates": f"{len(by_found)}/{len({true_template(f) for f, _ in t.values()})}",
+        "true_reached": len(by_true),
+        "template_merges": sum(len(x) > 1 for x in by_found.values()),
+        "template_splits": sum(len(x) > 1 for x in by_true.values()),
+        "per_template": pages / len(by_found) if by_found else None,
     }
 
 
@@ -132,16 +162,19 @@ def main():
                 out.mkdir()
                 maps.append(site.map(out, "--max-html-pages", str(budget)))
             same = all(json.dumps(maps[0][k], sort_keys=True) == json.dumps(maps[1][k], sort_keys=True)
-                       for k in ("routes", "urls", "tree", "links"))
+                       for k in ("routes", "urls", "templates", "tree", "links"))
             rows.append((budget, measure(maps[0], t), same))
     print("| Budget | Pages used | Validated families | Pages per validated family | Precision | Recall | False merges "
-          "| False splits | Singletons kept | Supported roles right | Weak / unknown routes | Coverage | Same map twice |")
-    print("|" + "---|" * 13)
+          "| False splits | Singletons kept | Supported roles right | Weak / unknown routes | Coverage | Templates found / true "
+          "| True templates checked | Template false merges | Template false splits | Pages per template | Same map twice |")
+    print("|" + "---|" * 18)
     for budget, m, same in rows:
         per = f"{m['per_family']:.1f}" if m["per_family"] else "—"
+        per_template = f"{m['per_template']:.1f}" if m["per_template"] else "—"
         print(f"| {budget} | {m['pages']} | {m['validated']} | {per} | {m['precision']:.3f} | {m['recall']:.3f} | "
               f"{m['false_merges']} | {m['false_splits']} | {m['singletons']} | {m['roles']} | {m['weak_unknown']} | "
-              f"{m['coverage']:.0%} | {'yes' if same else 'NO'} |")
+              f"{m['coverage']:.0%} | {m['templates']} | {m['true_reached']} | {m['template_merges']} | {m['template_splits']} | "
+              f"{per_template} | {'yes' if same else 'NO'} |")
 
 
 if __name__ == "__main__":
