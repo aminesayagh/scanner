@@ -73,11 +73,13 @@ def main_root(sel: Selector):
 
 
 def is_rich_text(el) -> bool:
-    """At least three direct children are prose and they make up 70% of them, with no section or form inside
-    (page-builder sections and product forms are layout, not body text)."""
+    """At least three direct children are prose, two of them paragraphs, and prose makes up 70% of them, with no
+    section or form inside (page-builder sections and product forms are layout, not body text). The paragraphs
+    keep a card (img, h3, p) as layout: a different card is a different template."""
     tags = [c.tag for c in el if isinstance(c.tag, str) and c.tag not in SKIP]
     prose = sum(t in PROSE for t in tags)
-    return prose >= 3 and prose >= 0.7 * len(tags) and not el.xpath(".//section | .//form")
+    return (prose >= 3 and tags.count("p") >= 2 and prose >= 0.7 * len(tags)
+            and not el.xpath(".//section | .//form"))
 
 
 def _skeleton(root, skip_chrome: bool, collapse_rich_text: bool) -> tuple[set[str], int]:

@@ -75,3 +75,9 @@ def test_product_page_is_not_collapsed():
     assert not is_rich_text(root) and not any(is_rich_text(el) for el in root.iter() if el.xpath(".//form"))
     assert observe(page, "https://shop.test/product/a")["rich_text_blocks"] == 0
     assert skeleton(page) == skeleton(page, collapse=False)
+
+
+def test_a_card_is_layout_not_body_text():
+    card = Selector(text='<div class="card"><img src="/a.jpg"><h3>Title</h3><p>Short text</p></div>').css("div")[0].root
+    body = Selector(text="<div><h2>Title</h2><p>One</p><p>Two</p></div>").css("div")[0].root
+    assert not is_rich_text(card) and is_rich_text(body)
