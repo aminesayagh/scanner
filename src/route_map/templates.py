@@ -8,6 +8,8 @@ with the same clustering as validation.py; unchecked URLs have no template. Each
 the member closest on average to the others, so it is screenshotted once. No network access here.
 """
 
+from collections import Counter
+
 from .features import ROLE_TYPES
 from .models import Config, Evidence, PageObservation, RouteRecord, TemplateRecord, URLRecord
 from .normalization import display_path
@@ -47,8 +49,11 @@ def inventory(records: list[URLRecord], routes: list[RouteRecord], observations:
         t.id = f"template_{number:03d}"
         for u in t.page_ids:
             by_id[u].template_id = t.id
-    for route in routes:  # a validated route's unsampled pages follow its samples, if they share one template
+    observed = {o.url_id for o in observations}
+    unchecked = Counter(r.route_id for r in records if r.id not in observed)
+    for route in routes:  # a validated route's unchecked pages follow its samples, if they share one template
         homes = {by_id[u].template_id for u in route.sample_ids if u in usable}
         if route.status == "validated_on_sample" and len(homes) == 1:
-            next(t for t in templates if t.id in homes).inferred_page_count += route.inferred_unsampled_url_count
+            # not inferred_unsampled_url_count: that also counts members fetched but unusable (redirected, failed)
+            next(t for t in templates if t.id in homes).inferred_page_count += unchecked[route.id]
     return templates

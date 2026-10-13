@@ -180,6 +180,12 @@ def test_unusable_pages_are_in_no_template():
     [products] = result.templates
     assert products.page_ids == sorted(uid(u) for u in urls[:3])
     assert [u.template_id for u in result.urls if u.crawl_url in urls[3:5]] == [None, None]
+    # inferred: only the 3 members with no observation at all, not the redirected and the error page
+    family = by_pattern(result)[("/product/{}", None)]
+    observed = {o.url_id for o in result.observations}
+    unplaced = [u for u in result.urls if u.route_id == family.id and u.id in observed and u.template_id is None]
+    assert products.checked_page_count == 3 and products.inferred_page_count == 3 and len(unplaced) == 2
+    assert products.checked_page_count + products.inferred_page_count + len(unplaced) == family.discovered_url_count == 8
 
 
 CATEGORY = """<html><head><title>Shirts</title></head><body><main><div class="container"><h1>Shirts</h1><p>Light shirts.</p>

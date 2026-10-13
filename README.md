@@ -459,8 +459,8 @@ towards splitting.
     the inventory then covers only the pages already fetched.
 - **Output (`schema_version` "2"):**
   - `templates`: each with an `id`, its `representative`, a `status` (`repeated` or `single`),
-    `checked_page_count`, `inferred_page_count` (unsampled members of a validated route whose samples all
-    use this template), its `route_ids`, `page_ids` and `evidence` (`skeleton`, `rich_text`,
+    `checked_page_count`, `inferred_page_count` (members never fetched of a validated route whose samples
+    all use this template; members fetched but unusable, such as redirects, are not counted), its `route_ids`, `page_ids` and `evidence` (`skeleton`, `rich_text`,
     `structured_data`);
   - `urls[].template_id`: set on checked pages only. Unchecked URLs have no template;
   - `observations[].rich_text_blocks`: how many rich-text blocks were collapsed on that page;

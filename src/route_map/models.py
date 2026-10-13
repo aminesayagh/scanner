@@ -121,7 +121,7 @@ class TemplateRecord(BaseModel):
     representative: str  # the member page to screenshot: path, plus ?query when present
     status: Literal["repeated", "single"]
     checked_page_count: int
-    inferred_page_count: int = 0  # unsampled members of validated routes whose samples all use it
+    inferred_page_count: int = 0  # never-fetched members of validated routes whose samples all use it
     route_ids: list[str]
     page_ids: list[str]
     evidence: list[Evidence] = []
