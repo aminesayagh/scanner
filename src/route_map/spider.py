@@ -49,7 +49,8 @@ class DiscoverySpider(Spider):
         self.pairs: set[tuple[str, str]] = set()
         self.known: set[str] = set()  # crawl URLs in the inventory
         self.sitemaps: set[str] = set()
-        self.pages: set[str] = set()  # requested (each uses one slot of the page budget)
+        self.pages: set[str] = set()  # requested during discovery
+        self.page_requests = 0  # page requests issued in every phase: the page budget is counted on this
         self.queued: set[str] = set()
         self.frontier: list[tuple[str, int]] = []  # (url, depth) waiting for a wave
         self.shapes: set[tuple] = set()
@@ -116,12 +117,13 @@ class DiscoverySpider(Spider):
                 picked.append((crawl, depth))
         if not picked:
             picked = waiting[:WAVE_OF_KNOWN_SHAPES]
-        picked = picked[: max(0, self.page_budget - len(self.pages))]
+        picked = picked[: max(0, self.page_budget - self.page_requests)]
         for crawl, depth in picked:
             self.frontier.remove((crawl, depth))
             self.pages.add(crawl)
             self.shapes.add(path_shape(crawl))
-        if self.frontier and len(self.pages) >= self.page_budget:
+        self.page_requests += len(picked)
+        if self.frontier and self.page_requests >= self.page_budget:
             self.stop_reasons.add("discovery page budget reached")
         return [self.page_request(crawl, depth) for crawl, depth in picked]
 
@@ -195,25 +197,31 @@ class DiscoverySpider(Spider):
         self.sample_templates()
 
     def planning(self):
+        """(records, families, observations by id, records by id, pages left in the budget, ids requested
+        without an observation). The last are pages that were not HTML: never planned again, so no slot of the
+        budget is spent twice on one URL."""
         records, _ = records_from(sorted(self.pairs), self.config, self.seed)
         observed = {o.url_id: o for o in self.observations}
-        budget = max(self.config.max_html_pages - len(self.pages) - len(self.samples), 0)
-        return records, families(records, self.config), observed, {r.id: r for r in records}, budget
+        budget = max(self.config.max_html_pages - self.page_requests, 0)
+        requested = self.pages | self.samples
+        not_html = {r.id for r in records if r.crawl_url in requested and r.id not in observed}
+        return records, families(records, self.config), observed, {r.id: r for r in records}, budget, not_html
 
     def fetch(self, picked: list[str], by_id: dict) -> None:
         for uid in picked:
             self.samples.add(by_id[uid].crawl_url)
+            self.page_requests += 1
             self.crawler.engine.crawl(self.page_request(by_id[uid].crawl_url, self.config.max_depth))
         raise DontCloseSpider  # Scrapy checks idleness again a few seconds later
 
     def validate(self) -> None:
         """Samples, or extra samples: fetched (DontCloseSpider) unless there is nothing to fetch."""
-        _, candidates, observed, by_id, budget = self.planning()
+        _, candidates, observed, by_id, budget, not_html = self.planning()
 
         def plan(limit):
             if self.phase == "samples":
-                return plan_samples(candidates, set(observed), limit, self.config.samples_per_family)
-            return plan_extra(candidates, observed, by_id, self.config, limit)
+                return plan_samples(candidates, set(observed), limit, self.config.samples_per_family, not_html)
+            return plan_extra(candidates, observed, by_id, self.config, limit, not_html)
 
         picked = plan(budget)
         if len(plan(10**9)) > len(picked):
@@ -225,10 +233,9 @@ class DiscoverySpider(Spider):
         """One round of template sampling (DontCloseSpider), or the end of the crawl, with a stop reason for
         each family the budget left open. Not planned: pages requested without an observation (not HTML), and
         pages in no family found only deeper than max_depth (links of sample pages, as in discovery)."""
-        records, candidates, observed, by_id, budget = self.planning()
-        requested, grouped = self.pages | self.samples, {u for c in candidates for u in c.member_ids}
-        skip = {r.id for r in records if (r.crawl_url in requested and r.id not in observed)
-                or (r.id not in grouped and self.reach.get(r.id, 0) > self.config.max_depth)}
+        records, candidates, observed, by_id, budget, not_html = self.planning()
+        grouped = {u for c in candidates for u in c.member_ids}
+        skip = not_html | {r.id for r in records if r.id not in grouped and self.reach.get(r.id, 0) > self.config.max_depth}
         if budget:
             if picked := plan_templates(candidates, records, observed, self.config, self.saturation, budget, skip):
                 self.fetch(picked, by_id)

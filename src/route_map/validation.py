@@ -104,23 +104,26 @@ def round_robin(queues: list[list[str]], budget: int) -> list[str]:
     return picked
 
 
-def plan_samples(candidates: list[RouteCandidate], observed: set[str], budget: int, per_family: int) -> list[str]:
+def plan_samples(candidates: list[RouteCandidate], observed: set[str], budget: int, per_family: int,
+                 skip: Collection[str] = ()) -> list[str]:
     """First-round samples, one per family in turn (largest families first) so no family takes the whole
-    budget. Pages already fetched during discovery count as samples and cost nothing."""
+    budget. Pages already fetched during discovery count as samples and cost nothing; pages in `skip` (requested
+    already, not HTML) are not planned again."""
     queues = []
     for c in sorted(candidates, key=lambda c: (-len(c.member_ids), c.pattern)):
         have = len(observed & set(c.member_ids))
-        queues.append([u for u in c.sample_ids if u not in observed][: max(0, per_family - have)])
+        queues.append([u for u in c.sample_ids if u not in observed and u not in skip][: max(0, per_family - have)])
     return round_robin(queues, budget)
 
 
 def plan_extra(candidates: list[RouteCandidate], observations: dict[str, PageObservation],
-               records: dict[str, URLRecord], config: Config, budget: int) -> list[str]:
-    """Second-round samples for families whose samples disagreed or were too few."""
+               records: dict[str, URLRecord], config: Config, budget: int, skip: Collection[str] = ()) -> list[str]:
+    """Second-round samples for families whose samples disagreed or were too few (`skip` as in plan_samples)."""
     queues = []
     for c in sorted(candidates, key=lambda c: (-len(c.member_ids), c.pattern)):
         if judge(c.member_ids, observations, records, config).wants_more:
-            queues.append([u for u in c.sample_ids + c.extra_sample_ids if u not in observations][: config.extra_samples])
+            queues.append([u for u in c.sample_ids + c.extra_sample_ids
+                           if u not in observations and u not in skip][: config.extra_samples])
     return round_robin(queues, budget)
 
 

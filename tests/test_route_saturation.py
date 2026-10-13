@@ -130,3 +130,20 @@ def test_a_family_saturates_once_its_pages_stop_adding_templates():
     assert state[pattern["same"]][1] >= config.saturation_window  # saturated after one quiet window
     assert sum(u in observations for u in map(uid, same)) == 2 + config.saturation_window
     assert all(u in observations for u in map(uid, new))  # each page added a template: checked to the end
+
+
+def test_pages_that_are_not_html_use_one_budget_slot_each(tmp_path):
+    """A non-HTML page leaves no observation; it is still requested once and counts against the page budget."""
+    def routes(base):
+        files, posts = [f"/files/f-{n}" for n in range(40)], [f"/blog/post-{n}" for n in range(10)]
+        pages = {"/robots.txt": ("text/plain", "Sitemap: /sitemap.xml\n"),
+                 "/sitemap.xml": ("application/xml", urlset(base, files + posts)), "/": (PAGE, html("Home", []))}
+        pages.update({p: ("application/pdf", b"%PDF-1.4") for p in files})
+        pages.update({p: (PAGE, layout(n % 6, p)) for n, p in enumerate(posts)})
+        return pages
+
+    site = Site(routes)
+    site.map(tmp_path, "--max-html-pages", "20")
+    requested = page_requests(site)
+    assert len(requested) <= 20
+    assert len(requested) == len(set(requested))  # no URL requested twice
