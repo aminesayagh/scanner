@@ -439,7 +439,9 @@ towards splitting.
     tables, figures, images), at least 2 of them `p`, prose making up at least 70% of its children, and no
     `section` or `form` inside. The main-content root itself is never collapsed.
   - **Why cards stay layout:** a product card (`img`, `h3`, one `p`) has one paragraph, so it is not rich
-    text. A different card is a different template, and it should get its own screenshot.
+    text. A list counts as prose only when its items hold text: a `ul` of product cards (items holding a
+    `div`, `img`, heading, `table` or `form`) is layout, so a page wrapper around an intro and a product
+    grid is not collapsed. A different card is a different template, and it should get its own screenshot.
 - **Clustering:** every usable checked page of the site is grouped by skeleton, with the same 50% rule and
   JSON-LD check as validation. A page that failed, redirected or read as an error page has no template.
 - **Templates phase:** after validation, the rest of the page budget keeps fetching unchecked members of

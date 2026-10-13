@@ -172,3 +172,19 @@ def test_unusable_pages_are_in_no_template():
     [products] = result.templates
     assert products.page_ids == sorted(uid(u) for u in urls[:3])
     assert [u.template_id for u in result.urls if u.crawl_url in urls[3:5]] == [None, None]
+
+
+CATEGORY = """<html><head><title>Shirts</title></head><body><main><div class="container"><h1>Shirts</h1><p>Light shirts.</p>
+<p>Made in Fes.</p><ul class="products">""" + "".join(
+    f'<li><a href="/product/shirt-{n}"><img src="/{n}.jpg"><h3>Shirt {n}</h3><span class="price">{n}9.00</span></a></li>'
+    for n in range(6)) + """</ul><div class="pager"><a href="?page=2">Next</a></div></div></main></body></html>"""
+ABOUT = """<html><head><title>About</title></head><body><main><div class="container"><h1>About us</h1><p>We sew.</p>
+<p>Since 1990.</p><ul><li>Linen</li><li>Cotton</li><li>Wool</li></ul><p>Visit us.</p></div></main></body></html>"""
+
+
+def test_a_card_list_inside_a_page_wrapper_stays_layout():
+    """A wrapper holding a heading, two paragraphs and a product grid is a listing page, not a rich-text body."""
+    urls = [BASE + "/category/shirts", BASE + "/about"]
+    result = run(urls, [seen(urls[0], CATEGORY), seen(urls[1], ABOUT)])
+    assert len(result.templates) == 2
+    assert "div>rich_text" in skeleton(ABOUT) and "div>rich_text" not in skeleton(CATEGORY)

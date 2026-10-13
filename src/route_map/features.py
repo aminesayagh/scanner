@@ -3,9 +3,9 @@ signals. Used to check that the sampled pages of a family share one template.
 
 Structure is a set of tag paths (an element with up to two ancestors inside the main content, e.g.
 "ul>li>a"): text, prices, generated ids and how many cards repeat do not change it, while a different
-component does. The inside of a rich-text block (an element mostly made of paragraphs, headings, lists,
-tables and figures, holding no section or form) counts as one "rich_text" token, so posts with the same
-layout agree whatever their body holds. Scripts, styles and SVG are ignored; without a <main>,
+component does. The inside of a rich-text block (an element mostly made of paragraphs, headings, text
+lists, tables and figures, holding no section or form) counts as one "rich_text" token, so posts with the
+same layout agree whatever their body holds. Scripts, styles and SVG are ignored; without a <main>,
 [role=main] or <article>, the body minus header, nav, footer and aside is used and the evidence is marked
 weaker ("heuristic").
 """
@@ -21,6 +21,8 @@ from .discovery import path_shape
 SKIP = {"script", "style", "noscript", "template", "svg", "iframe", "link", "meta"}
 CHROME = {"header", "nav", "footer", "aside"}
 PROSE = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "dl", "blockquote", "pre", "figure", "table", "img", "hr"}
+# Inside a list item, these make it a card rather than a line of text.
+CARD_PARTS = {"div", "article", "section", "img", "picture", "figure", "h1", "h2", "h3", "h4", "h5", "h6", "table", "form"}
 # Structured-data types that name what a page is about; two samples with different ones are different pages.
 ROLE_TYPES = {"Product", "ProductGroup", "Article", "BlogPosting", "NewsArticle", "Recipe", "Event", "JobPosting",
               "CollectionPage", "SearchResultsPage", "ContactPage", "AboutPage", "FAQPage", "ItemList", "Offer"}
@@ -72,12 +74,21 @@ def main_root(sel: Selector):
     return (body[0].root if body else sel.root), "heuristic"
 
 
+def _is_prose(el) -> bool:
+    """A prose element; a list is prose only when its items hold text, not cards (a product grid is layout)."""
+    if el.tag in ("ul", "ol"):
+        return not any(isinstance(d.tag, str) and d.tag in CARD_PARTS for li in el for d in li.iterdescendants())
+    return el.tag in PROSE
+
+
 def is_rich_text(el) -> bool:
     """At least three direct children are prose, two of them paragraphs, and prose makes up 70% of them, with no
     section or form inside (page-builder sections and product forms are layout, not body text). The paragraphs
-    keep a card (img, h3, p) as layout: a different card is a different template."""
-    tags = [c.tag for c in el if isinstance(c.tag, str) and c.tag not in SKIP]
-    prose = sum(t in PROSE for t in tags)
+    keep a card (img, h3, p) as layout, and a list of cards is not prose: a different card is a different
+    template."""
+    children = [c for c in el if isinstance(c.tag, str) and c.tag not in SKIP]
+    tags = [c.tag for c in children]
+    prose = sum(_is_prose(c) for c in children)
     return (prose >= 3 and tags.count("p") >= 2 and prose >= 0.7 * len(tags)
             and not el.xpath(".//section | .//form"))
 
