@@ -77,23 +77,28 @@ def main_root(sel: Selector):
     return (body[0].root if body else sel.root), "heuristic"
 
 
+def _holds_cards(lst) -> bool:
+    return any(isinstance(d.tag, str) and d.tag in CARD_PARTS for li in lst for d in li.iterdescendants())
+
+
 def _is_prose(el) -> bool:
     """A prose element; a list is prose only when its items hold text, not cards (a product grid is layout)."""
     if el.tag in ("ul", "ol"):
-        return not any(isinstance(d.tag, str) and d.tag in CARD_PARTS for li in el for d in li.iterdescendants())
+        return not _holds_cards(el)
     return el.tag in PROSE
 
 
 def is_rich_text(el) -> bool:
     """At least three direct children are prose, two of them paragraphs, and prose makes up 70% of them, with no
-    section or form inside (page-builder sections and product forms are layout, not body text). The paragraphs
+    section, form or list of cards inside (page-builder sections, product forms and grids are layout, not body text). The paragraphs
     keep a card (img, h3, p) as layout, and a list of cards is not prose: a different card is a different
     template."""
     children = [c for c in el if isinstance(c.tag, str) and c.tag not in SKIP]
     tags = [c.tag for c in children]
     prose = sum(_is_prose(c) for c in children)
     return (prose >= 3 and tags.count("p") >= 2 and prose >= 0.7 * len(tags)
-            and not el.xpath(".//section | .//form"))
+            and not el.xpath(".//section | .//form")
+            and not any(_holds_cards(lst) for lst in el.iter("ul", "ol")))  # a grid anywhere, however long the intro
 
 
 def _skeleton(root, skip_chrome: bool, collapse_rich_text: bool) -> tuple[set[str], int]:

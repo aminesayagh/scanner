@@ -131,7 +131,8 @@ class DiscoverySpider(Spider):
         # Redirects come back as responses: recorded as an alias, the target queued like any link, and never
         # followed to another host.
         return Request(url, self.parse_page, errback=self.failed_page, dont_filter=True,
-                       meta={"route_depth": depth, "dont_redirect": True, "handle_httpstatus_list": REDIRECTS})
+                       meta={"route_depth": depth, "dont_redirect": True, "dont_retry": True,  # a retry would be a page outside the budget
+                             "handle_httpstatus_list": REDIRECTS})
 
     def sitemap(self, url: str) -> Request | None:
         if url in self.sitemaps:

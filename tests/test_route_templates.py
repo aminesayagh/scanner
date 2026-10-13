@@ -204,6 +204,16 @@ def test_a_card_list_inside_a_page_wrapper_stays_layout():
     assert "div>rich_text" in skeleton(ABOUT) and "div>rich_text" not in skeleton(CATEGORY)
 
 
+def test_a_card_list_after_a_long_intro_stays_layout():
+    """However many paragraphs come before it, a product grid keeps its wrapper from reading as body text."""
+    intro = "<h1>Shirts</h1><p>One.</p><p>Two.</p><p>Three.</p>"
+    cards = "".join(f'<li><a href="/p/{n}"><img src="/{n}.jpg"><h3>Shirt {n}</h3><span>9</span></a></li>' for n in range(6))
+    category = f'<html><body><main><div class="container">{intro}<ul class="products">{cards}</ul></div></main></body></html>'
+    about = f'<html><body><main><div class="container">{intro}<ul><li>Cotton</li><li>Linen</li></ul></div></main></body></html>'
+    urls = [BASE + "/category/shirts", BASE + "/about"]
+    assert len(run(urls, [seen(urls[0], category), seen(urls[1], about)]).templates) == 2
+
+
 def test_head_and_header_do_not_decide_the_skeleton():
     """og:type and a search box in the header are on any page of a theme; they stay signals, not features."""
     body = "<main><h1>Spring</h1><div class=\"intro\"><p>Light.</p><span>New</span></div></main>"

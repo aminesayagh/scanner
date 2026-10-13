@@ -147,3 +147,12 @@ def test_pages_that_are_not_html_use_one_budget_slot_each(tmp_path):
     requested = page_requests(site)
     assert len(requested) <= 20
     assert len(requested) == len(set(requested))  # no URL requested twice
+
+
+def test_failing_pages_are_not_retried_past_the_page_budget(tmp_path):
+    """A page answering 503 is requested once: a retry would be a page request outside the budget."""
+    site = Site(blog(20, lambda n, p: ("<html><body>busy</body></html>")))
+    site.pages = {k: (v if not k.startswith("/blog/post-") else (PAGE, "busy", 503)) for k, v in site.pages.items()}
+    site.map(tmp_path, "--max-html-pages", "10")
+    requested = page_requests(site)
+    assert len(requested) <= 10 and len(requested) == len(set(requested))

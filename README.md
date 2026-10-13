@@ -318,7 +318,7 @@ family: their pages share a template and carry a contact form. The map took 12 r
     PDFs, fonts, ...), other hosts (listed in `skipped_hosts`; `--include-subdomains` widens this), and
     pages disallowed by robots.txt (`blocked_urls`).
   - **Throttling:** requests are throttled (Scrapy AutoThrottle, at most 4 at a time), time out after 20 s
-    and are retried twice. `--deadline-seconds` (300 by default) bounds the whole discovery.
+    and are retried twice, except page requests: a retry would be a page outside `--max-html-pages`. `--deadline-seconds` (300 by default) bounds the whole discovery.
   - **Partial maps:** a budget that runs out yields a partial map, with the reason in
     `crawl_report.stop_reasons`. A seed page without links in its HTML is reported as a possible
     JavaScript shell; pages are not rendered in this version.
