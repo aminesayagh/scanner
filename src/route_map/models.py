@@ -1,12 +1,12 @@
 """Records of a route map, kept separate as the plan asks: URLs, page observations, structural candidates,
-route families and the crawl report. The JSON output is versioned by SCHEMA_VERSION.
+route families, page templates and the crawl report. The JSON output is versioned by SCHEMA_VERSION.
 """
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 RouteStatus = Literal["validated_on_sample", "provisional", "individual", "unresolved"]
 ParameterType = Literal["integer", "uuid", "hex", "slug", "string"]
@@ -27,6 +27,8 @@ class Config(BaseModel):
     similarity_threshold: float = Field(0.5, gt=0, le=1)  # Jaccard overlap of main-content structure
     min_agreeing_samples: int = Field(3, ge=1)  # before a family is validated on its sample
     extra_samples: int = Field(3, ge=0)  # requested for a family whose samples disagree
+    templates: bool = True  # after validation, keep sampling families while their pages show new templates
+    saturation_window: int = Field(5, ge=1)  # pages in a row that must add no new template before a family counts as saturated
     tracking_parameters: list[str] = Field(default_factory=lambda: [
         "utm_*", "gclid", "dclid", "fbclid", "msclkid", "yclid", "mc_cid", "mc_eid", "_ga", "_gl",
     ])
@@ -50,6 +52,7 @@ class URLRecord(BaseModel):
     # "unresolved": its family's samples did not agree.
     assignment: Literal["assigned", "ambiguous", "unresolved"] = "assigned"
     candidate_route_ids: list[str] = []
+    template_id: str | None = None  # checked pages only (see templates.py); null for unchecked URLs
 
 
 class PageObservation(BaseModel):
@@ -58,7 +61,8 @@ class PageObservation(BaseModel):
     status: int | None = None
     final_url: str | None = None
     title: str | None = None
-    features: list[str] = []  # main-content structure features
+    features: list[str] = []  # main-content structure features, rich-text bodies collapsed
+    rich_text_blocks: int = 0  # rich-text blocks collapsed into one token each
     structured_data_types: list[str] = []
     breadcrumbs: list[str] = []
     links: list[str] = []
@@ -110,6 +114,19 @@ class RouteRecord(BaseModel):
     exception_route_ids: list[str] = []
 
 
+class TemplateRecord(BaseModel):
+    """Checked pages that share a skeleton, whatever their URL (see templates.py)."""
+
+    id: str
+    representative: str  # the member page to screenshot: path, plus ?query when present
+    status: Literal["repeated", "single"]
+    checked_page_count: int
+    inferred_page_count: int = 0  # never-fetched members of validated routes whose samples all use it
+    route_ids: list[str]
+    page_ids: list[str]
+    evidence: list[Evidence] = []
+
+
 class CrawlReport(BaseModel):
     budgets: Config
     requests_used: int = 0
@@ -134,6 +151,7 @@ class RouteMap(BaseModel):
     routes: list[RouteRecord]
     urls: list[URLRecord]  # the full inventory, each with its route
     observations: list[PageObservation] = []
+    templates: list[TemplateRecord] = []
     tree: dict = {}  # URL prefix hierarchy: nodes without a route are synthetic groupings, not pages
     links: list[dict] = []  # route-to-route links seen on fetched pages (separate from the prefix tree)
     crawl_report: CrawlReport

@@ -103,7 +103,8 @@ FAQ → call-to-action boundary from gaps-only (1 missed, 1 false split). Settin
 ## route-map
 
 Results recorded 10 October 2026 on a local shop whose families and roles are known
-(`evaluation/route_map_eval.py`). The shop has:
+(`evaluation/route_map_eval.py`), re-run on 13 October 2026 with the template inventory (templates phase on,
+saturation window 5). The shop has:
 
 - 300 product pages and an exception, `/product/compare`;
 - 8 collections that list products;
@@ -117,11 +118,11 @@ Each budget is crawled twice, with the same site answering in a different random
 uv run python evaluation/route_map_eval.py
 ```
 
-| Budget | Pages used | Validated families | Pages per validated family | Precision | Recall | False merges | False splits | Singletons kept | Supported roles right | Weak / unknown routes | Coverage | Same map twice |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 20 | 20 | 4 | 5.0 | 1.000 | 1.000 | 0 | 0 | 8/8 | 8/8 | 3/1 | 99% | yes |
-| 50 | 33 | 4 | 8.2 | 1.000 | 1.000 | 0 | 0 | 8/8 | 9/9 | 2/1 | 99% | yes |
-| 100 | 56 | 4 | 14.0 | 1.000 | 1.000 | 0 | 0 | 8/8 | 9/9 | 2/1 | 99% | yes |
+| Budget | Pages used | Validated families | Pages per validated family | Precision | Recall | False merges | False splits | Singletons kept | Supported roles right | Weak / unknown routes | Coverage | Templates found / true | True templates checked | Template false merges | Template false splits | Pages per template | Same map twice |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 20 | 20 | 4 | 5.0 | 1.000 | 1.000 | 0 | 0 | 8/8 | 8/8 | 3/1 | 99% | 8/9 | 8 | 0 | 0 | 2.5 | yes |
+| 50 | 38 | 4 | 9.5 | 1.000 | 1.000 | 0 | 0 | 8/8 | 9/9 | 2/1 | 99% | 9/9 | 9 | 0 | 0 | 4.2 | yes |
+| 100 | 61 | 4 | 15.2 | 1.000 | 1.000 | 0 | 0 | 8/8 | 9/9 | 2/1 | 99% | 9/9 | 9 | 0 | 0 | 6.8 | yes |
 
 - **Precision / recall:** computed over pairs of discovered URLs, "same route" against "same true family".
   An ambiguous URL counts as its own group.
@@ -133,6 +134,26 @@ uv run python evaluation/route_map_eval.py
   `/privacy` and `/checkout`, from URL words; the unknown one is `/product/compare`, whose URL words
   belong to the family it left.
 - **Coverage:** 99% because two of the three search pages are linked from nowhere.
+- **True templates:** 9, taken from the HTML each page is served. About and privacy share one layout;
+  collections, blog categories and search pages render the same listing page, so they are one template
+  over three families. Product, post, compare, home, contact, cart and login are one template each.
+- **Template false merges / splits:** over the checked pages only. A merge is a found template holding
+  pages of two true templates; a split is a true template whose checked pages sit in two found templates.
+  **Pages per template** is pages used divided by templates found.
+- **Same map twice** now also compares `templates`.
+
+**Templates:**
+
+- **No false merge and no false split at any budget.** The three listing families land in one template;
+  from 50 pages, about and privacy share another, over two routes (at 20, privacy is not checked).
+- **At 20 pages the contact page is missed.** The budget ran out with 3 individual pages unchecked, and
+  the stop reasons say so. From 50 pages every true template is found.
+- **The templates phase is cheap here, and finds nothing new.** It added 5 pages at 50 and at 100
+  (33 → 38, 56 → 61): one window of product pages, because the product family has an exception
+  (`/product/compare`) and so is not saturated from the start. Every single page was already checked, and
+  `--no-templates` finds the same templates on this shop. The budget at 100 is not used up.
+- **Pages per template grows with the budget** because discovery takes half of it (50 pages at 100, most
+  of them products), not because of template sampling.
 
 **Reading these numbers:** this shop's templates are written for the test, so perfect scores show the
 pipeline holds together, not that real sites are this clean. Live checks:

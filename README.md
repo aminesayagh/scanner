@@ -307,7 +307,7 @@ family: their pages share a template and carry a contact form. The map took 12 r
     (no entity expansion). **Sitemap URLs only go into the inventory**: 1,000 products listed in a sitemap
     cost no page requests.
   - **Pages:** HTML pages are fetched from the seed outward. Half of `--max-html-pages` goes to discovery;
-    the rest goes to validation samples. Pages are fetched in waves: a wave is chosen only once every
+    the rest goes to validation samples, then to template sampling (see Templates). Pages are fetched in waves: a wave is chosen only once every
     page in flight has answered, so the map does not depend on which response comes back first. A wave
     takes one waiting page per path shape not fetched yet (one product page is enough to show the product
     family, so the budget reaches the blog, pages and so on), then a few more members when every shape is
@@ -318,7 +318,7 @@ family: their pages share a template and carry a contact form. The map took 12 r
     PDFs, fonts, ...), other hosts (listed in `skipped_hosts`; `--include-subdomains` widens this), and
     pages disallowed by robots.txt (`blocked_urls`).
   - **Throttling:** requests are throttled (Scrapy AutoThrottle, at most 4 at a time), time out after 20 s
-    and are retried twice. `--deadline-seconds` (300 by default) bounds the whole discovery.
+    and are retried twice, except page requests: a retry would be a page outside `--max-html-pages`. `--deadline-seconds` (300 by default) bounds the whole discovery.
   - **Partial maps:** a budget that runs out yields a partial map, with the reason in
     `crawl_report.stop_reasons`. A seed page without links in its HTML is reported as a possible
     JavaScript shell; pages are not rendered in this version.
@@ -350,8 +350,11 @@ family: their pages share a template and carry a contact form. The map took 12 r
   - **What is compared:** each page's main content (`<main>`, `[role=main]` or `<article>`; otherwise the
     body without header, nav, footer and aside, marked as weaker evidence) as a set of tag paths such as
     `ul>li>a`. Texts, prices, generated ids and how many cards repeat do not count; a different component
-    does. Pages whose JSON-LD names different things (Product vs Article) never agree.
-  - **Agreement:** two pages agree when their structure overlaps by at least 50% (Jaccard).
+    does. Pages whose JSON-LD names different things (Product vs Article) never agree. Signals read outside
+    the main content (`og:type` or article dates in `<head>`, a search box in the header) do not count.
+  - **Agreement:** two pages agree when their structure overlaps by at least 50% (Jaccard). A page joins a
+    group only when it agrees with every member, so a page halfway between two unlike pages does not chain
+    them together. Pages are taken in URL path order, so the groups do not change with the host or port.
   - **Unusable samples:** samples that failed, were blocked, redirected elsewhere, or read as an error,
     sign-in or challenge page are set aside (`unusable_sample` evidence). They never count against their
     family.
@@ -418,3 +421,61 @@ family: their pages share a template and carry a contact form. The map took 12 r
     (such as `rel=next`) yet.
   - **Structure threshold:** 50% overlap of main-content structure decides whether two pages share a
     template. It was tuned on fixtures, not proven on every site.
+
+### Templates
+
+A **template** is a page layout: the checked pages whose main content has the same skeleton, whatever their
+URL. A **route** groups URLs by pattern. The two are independent:
+
+- **A template can span routes:** `/about` and `/privacy` built on one layout are one template over two
+  routes, and so are a collection page and a search page that render the same product grid.
+- **A route can hold several templates:** a provisional family whose few checked pages differ.
+
+The purpose is screenshots: `templates` lists every layout seen on the site with one `representative` URL
+(the member closest on average to the others), so section-scan captures each layout once. A false merge
+(two layouts in one template) hides a layout; a false split only costs one extra screenshot. The rules lean
+towards splitting.
+
+- **Skeleton:** the same tag paths as validation, with one change. A **rich-text block** counts as one
+  `rich_text` token, whatever it holds, so two posts on the same layout agree even when their bodies differ.
+  - **What counts as rich text:** an element with at least 3 prose children (paragraphs, headings, lists,
+    tables, figures, images), at least 2 of them `p`, prose making up at least 70% of its children, and no
+    `section` or `form` inside. The main-content root itself is never collapsed.
+  - **Why cards stay layout:** a product card (`img`, `h3`, one `p`) has one paragraph, so it is not rich
+    text. A list counts as prose only when its items hold text: a `ul` of product cards (items holding a
+    `div`, `img`, heading, `table` or `form`) is layout, so a page wrapper around an intro and a product
+    grid is not collapsed. A different card is a different template, and it should get its own screenshot.
+- **Clustering:** every usable checked page of the site is grouped by skeleton, with the same 50% rule and
+  JSON-LD check as validation. A page that failed, redirected or read as an error page has no template.
+- **Templates phase:** after validation, the rest of the page budget keeps fetching unchecked members of
+  each family, in rounds, while that family's pages keep touching templates the family had not touched
+  before. Such a template may already exist elsewhere on the site: a blog post on the home page's layout
+  still counts as new for the blog family.
+  - **Saturation:** each family counts the pages checked since it last touched a new template; the count
+    is updated once per round (to 0 after any round in which the family touched a new template, otherwise
+    up by the pages that round checked). The family is saturated once the count reaches
+    `--saturation-window` (5 by default). A family validated on one template, with no exceptions, is
+    saturated from the start, so a 1,000-product shop spends nothing more on products.
+  - **Single pages:** each URL in no family is checked once, except pages that were already requested and
+    were not HTML, and pages found only deeper than `--max-depth` (links of pages fetched after discovery).
+  - **Budget:** families take turns, up to one window of pages each per round. When the budget runs out,
+    `stop_reasons` names each family still showing new templates (with how many members were not checked)
+    and how many individual pages were never checked.
+  - **Options:** `--templates` (the default) runs this phase; `--no-templates` stops after validation, and
+    the inventory then covers only the pages already fetched.
+- **Output (`schema_version` "2"):**
+  - `templates`: each with an `id`, its `representative`, a `status` (`repeated` or `single`),
+    `checked_page_count`, `inferred_page_count` (members never fetched of a validated route whose samples
+    all use this template; members fetched but unusable, such as redirects, are not counted), its `route_ids`, `page_ids` and `evidence` (`skeleton`, `rich_text`,
+    `structured_data`);
+  - `urls[].template_id`: set on checked pages only. Unchecked URLs have no template;
+  - `observations[].rich_text_blocks`: how many rich-text blocks were collapsed on that page;
+  - the `--summary` file adds a Templates table.
+- **Limits:**
+  - **No rendering:** the skeleton is read from served HTML, not from what the browser paints. Two layouts
+    that differ only in CSS are one template.
+  - **The rich-text rule is a heuristic:** a large custom component inside a post body (a pricing table
+    built from divs, an embedded form) is not collapsed, so that post may count as a new template.
+  - **Saturation is not proof:** a layout used by 1 page in 500 can be missed when no sampled page uses it.
+    The stop reasons show where the budget ended before a family settled.
+  - **The 50% threshold** was tuned on fixtures, not proven on every site.

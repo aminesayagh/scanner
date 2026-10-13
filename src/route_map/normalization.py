@@ -51,5 +51,11 @@ def host_of(record: dict) -> str:
     return urlsplit(record["crawl_url"]).netloc
 
 
+def display_path(crawl_url: str) -> str:
+    """How a page is shown in a route map: its path, plus the query when there is one."""
+    u = urlsplit(crawl_url)
+    return u.path + (f"?{u.query}" if u.query else "")
+
+
 def _tracking(key: str, patterns) -> bool:
     return any(fnmatch.fnmatchcase(key.lower(), p) for p in patterns)

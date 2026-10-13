@@ -10,8 +10,9 @@ from .grouping import candidates as find_candidates
 from .models import Config, CrawlReport, Evidence, PageObservation, RouteMap, RouteRecord, URLRecord
 from .export import link_edges, prefix_tree
 from .features import ROLE_TYPES
-from .normalization import Rejected, normalize, url_id
+from .normalization import Rejected, display_path, normalize, url_id
 from .roles import assign_roles
+from .templates import inventory
 from .validation import judge, unusable_reason
 
 
@@ -87,8 +88,7 @@ def infer(
     obs = {o.url_id: o for o in observations or []}
 
     def path(uid):
-        u = urlsplit(by_id[uid].crawl_url)
-        return u.path + (f"?{u.query}" if u.query else "")
+        return display_path(by_id[uid].crawl_url)
 
     drafts: list[dict] = []  # route, its sort key, assigned and ambiguous URL ids, keys of its exception routes
 
@@ -170,5 +170,6 @@ def infer(
     report = CrawlReport(**{**found_report, "budgets": config, "discovered_urls": len(records), "rejected_urls": rejected,
                             "limitations": found_report.get("limitations", []) + limitations})
     assign_roles(routes, records, observations or [], config.tracking_parameters)
-    return RouteMap(seed=seed, routes=routes, urls=records, observations=observations or [], crawl_report=report,
+    templates = inventory(records, routes, observations or [], config)
+    return RouteMap(seed=seed, routes=routes, urls=records, observations=observations or [], templates=templates, crawl_report=report,
                     tree=prefix_tree(routes), links=link_edges(records, observations or [], config.tracking_parameters))
