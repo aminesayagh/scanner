@@ -105,19 +105,21 @@ def infer(
 
     for c in found:
         outcome = judge(c.member_ids, obs, by_id, config)
-        evidence = [Evidence(kind="structure", value=f"{c.distinct_values} distinct values in {c.parameter.name}")]
+        evidence = [Evidence(kind="structure", value=f"{c.distinct_values} distinct values in {c.parameters[-1].name}")]
+        if c.merged_families:
+            evidence.append(Evidence(kind="structure", value=f"{c.merged_families} sibling families merged over {c.parameters[0].name}"))
         evidence += [Evidence(kind="unusable_sample", value=f"{why}: {path(u)}") for u, why in sorted(outcome.unusable.items())]
         common = dict(pattern=c.pattern)  # each route gets its own parameter copy: roles rename them
         if outcome.kind == "provisional":
             add((c.pattern, "", "provisional"), RouteRecord(
-                id="", status="provisional", parameters=[c.parameter.model_copy()], discovered_url_count=len(c.member_ids),
+                id="", status="provisional", parameters=[p.model_copy() for p in c.parameters], discovered_url_count=len(c.member_ids),
                 successful_sample_count=len(outcome.loose), inferred_unsampled_url_count=len(c.member_ids), examples=[path(u) for u in c.sample_ids[:3]],
                 sample_ids=c.sample_ids, evidence=evidence, **common), c.member_ids)
             continue
         if outcome.kind == "unresolved":
             rest = [u for u in c.member_ids if u not in outcome.loose]
             add((c.pattern, "", "unresolved"), RouteRecord(
-                id="", status="unresolved", parameters=[c.parameter.model_copy()], discovered_url_count=len(rest), inferred_unsampled_url_count=len(rest),
+                id="", status="unresolved", parameters=[p.model_copy() for p in c.parameters], discovered_url_count=len(rest), inferred_unsampled_url_count=len(rest),
                 examples=[path(u) for u in c.sample_ids[:3]], sample_ids=c.sample_ids,
                 evidence=evidence + [Evidence(kind="main_structure", value="samples disagree",
                                               sample_support=f"0/{len(outcome.loose)}")], **common),
@@ -135,7 +137,7 @@ def infer(
         for k, t in enumerate(outcome.templates):
             assigned = t if mixed else t + others
             add((c.pattern, chr(97 + k) if mixed else "", "validated_on_sample"), RouteRecord(
-                id="", status="validated_on_sample", parameters=[c.parameter.model_copy()], template=chr(97 + k) if mixed else None,
+                id="", status="validated_on_sample", parameters=[p.model_copy() for p in c.parameters], template=chr(97 + k) if mixed else None,
                 discovered_url_count=len(assigned), successful_sample_count=len(t),
                 inferred_unsampled_url_count=len(assigned) - len(t), ambiguous_url_count=len(others) if mixed else 0,
                 examples=[path(u) for u in t[:3]], sample_ids=t,

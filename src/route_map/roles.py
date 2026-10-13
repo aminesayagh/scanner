@@ -165,7 +165,21 @@ def assign_roles(routes: list[RouteRecord], records: list[URLRecord], observatio
         role, certainty, evidence = decide(route, listing_cues) if any(listing_cues.values()) else first[route.id]
         route.role, route.role_certainty = role, certainty
         route.evidence = route.evidence + evidence
-        for p in route.parameters:
-            if p.location == "path" and (name := PARAMETER_NAMES.get((role, p.type))) and certainty == "supported":
-                route.pattern = route.pattern.replace("{" + p.name + "}", "{" + name + "}")
-                p.name = name
+        if certainty == "supported":
+            rename_parameters(route, role)
+
+
+def rename_parameters(route: RouteRecord, role: str) -> None:
+    """The last path parameter is named after the role ({product_slug}); an earlier one only after the word
+    before it ({category_slug} after /collections/ or /category/), else it stays neutral."""
+    segments = route.pattern.split("?")[0].split("/")
+    path_params = [p for p in route.parameters if p.location == "path"]
+    for p in path_params:
+        if p is path_params[-1]:
+            name = PARAMETER_NAMES.get((role, p.type))
+        else:
+            before = segments[segments.index("{" + p.name + "}") - 1].lower() if "{" + p.name + "}" in segments else ""
+            name = "category_slug" if before in WORDS["product_listing"] | {"blog", "blogs"} and p.type in ("slug", "string") else None
+        if name and "{" + name + "}" not in route.pattern:
+            route.pattern = route.pattern.replace("{" + p.name + "}", "{" + name + "}")
+            p.name = name

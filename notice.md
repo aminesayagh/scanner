@@ -43,9 +43,9 @@ would catch it on the first screen. Small and low impact; revisit with the next 
 
 ## route-map: limits after milestone 2 (deferred)
 
-- **One variable slot per family.** `/collections/<name>/products/<slug>` on a Shopify shop gives one
-  family per collection instead of `/collections/{collection}/products/{product}`. The plan adds
-  multi-variable families after validation (incremental generalization).
+- **Two parameters at most (resolved for two).** Sibling families now merge into
+  `/collections/{category_slug}/products/{product_slug}`. Three or more varying segments are still not
+  inferred; add a further merge pass if a site needs it.
 - **No rendering.** Pages are read as served HTML. A JavaScript shell (a seed page without links) is
   only reported as a limitation; optional Playwright rendering is a later extension.
 - **Action-link filter by URL words.** Links whose path or query holds words such as `logout`,

@@ -404,35 +404,29 @@ def decide(run: Path, state: ClassificationState, key_name: str, status: str, la
 
 
 def export(run: Path, report: dict, state: ClassificationState) -> Path:
-    """report-classified.json: the original report with each section's and the page's label and confidence.
+    """report-classified.json: the original report with each section's and the page's result label.
 
-    The label is the confirmed one when decided, else the proposal; null when unresolved or failed. The
-    confidence is Jev's confidence in that label: null when the reviewer chose another label, or when no
-    request was made. Full details (probabilities, model, status) stay in classification.json.
+    The label is the reviewer's when decided (null when left unresolved), else Jev's or preprocessing's
+    proposal; null when the request failed. Full details (probabilities, confidence, model, status) stay in
+    classification.json.
     """
     enriched = json.loads(json.dumps(report))
     for i, section in enumerate(enriched["sections"]):
         s = state.sections.get(section_key(i), SectionState())
         p = s.proposal
-        proposed = p.label if p and p.status == "proposed" else None
-        confidence = p.confidence if p and p.status == "proposed" else None
-        section["classification"] = _label_and_confidence(proposed, confidence, s.decision)
+        section["classification"] = _label(p.label if p and p.status == "proposed" else None, s.decision)
     page = state.page
     enriched["classification"] = {}
     for q in PAGE_QUESTIONS:
         p = page.proposal
         a = p.answers.get(q) if p and p.status == "proposed" else None
-        enriched["classification"][q] = _label_and_confidence(
-            a.label if a else None, a.confidence if a else None, page.decisions.get(q)
-        )
+        enriched["classification"][q] = _label(a.label if a else None, page.decisions.get(q))
     out = run / "report-classified.json"
     out.write_text(json.dumps(enriched, indent=2, ensure_ascii=False))
     return out
 
 
-def _label_and_confidence(proposed: str | None, confidence: float | None, decision: Decision | None) -> dict:
+def _label(proposed: str | None, decision: Decision | None) -> dict:
     if decision is None:
-        return {"label": proposed, "confidence": confidence}
-    if decision.status != "confirmed":
-        return {"label": None, "confidence": None}
-    return {"label": decision.label, "confidence": confidence if decision.label == proposed else None}
+        return {"label": proposed}
+    return {"label": decision.label if decision.status == "confirmed" else None}

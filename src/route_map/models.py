@@ -77,9 +77,10 @@ class Parameter(BaseModel):
 
 class RouteCandidate(BaseModel):
     pattern: str
-    parameter: Parameter
+    parameters: list[Parameter]  # one, or two for merged sibling families
     member_ids: list[str]
-    distinct_values: int
+    distinct_values: int  # of the last parameter
+    merged_families: int = 0  # sibling families merged over the first parameter
     sample_ids: list[str]  # the deterministic sample plan for validation
     extra_sample_ids: list[str] = []  # next in line when the first samples disagree
 
