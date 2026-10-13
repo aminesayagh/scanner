@@ -351,7 +351,9 @@ family: their pages share a template and carry a contact form. The map took 12 r
     body without header, nav, footer and aside, marked as weaker evidence) as a set of tag paths such as
     `ul>li>a`. Texts, prices, generated ids and how many cards repeat do not count; a different component
     does. Pages whose JSON-LD names different things (Product vs Article) never agree.
-  - **Agreement:** two pages agree when their structure overlaps by at least 50% (Jaccard).
+  - **Agreement:** two pages agree when their structure overlaps by at least 50% (Jaccard). A page joins a
+    group only when it agrees with every member, so a page halfway between two unlike pages does not chain
+    them together. Pages are taken in URL path order, so the groups do not change with the host or port.
   - **Unusable samples:** samples that failed, were blocked, redirected elsewhere, or read as an error,
     sign-in or challenge page are set aside (`unusable_sample` evidence). They never count against their
     family.

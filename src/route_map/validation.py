@@ -39,34 +39,41 @@ def usable_pages(observations: Iterable[PageObservation], records: dict[str, URL
             if o.url_id in records and o.features and unusable_reason(o, records[o.url_id]) is None}
 
 
-def site_clusters(usable: dict[str, PageObservation], config: Config) -> list[list[str]]:
+def sample(uid: str, obs: PageObservation, record: URLRecord) -> tuple[str, str, set, frozenset]:
+    """A page as `clusters` takes it."""
+    return uid, display_path(record.crawl_url), set(obs.features), frozenset(set(obs.structured_data_types) & ROLE_TYPES)
+
+
+def site_clusters(usable: dict[str, PageObservation], records: dict[str, URLRecord], config: Config) -> list[list[str]]:
     """The site's templates: usable pages grouped by skeleton, whatever their URL (see templates.py)."""
-    return clusters([(u, set(o.features), frozenset(set(o.structured_data_types) & ROLE_TYPES)) for u, o in usable.items()],
-                    config.similarity_threshold)
+    return clusters([sample(u, o, records[u]) for u, o in usable.items()], config.similarity_threshold)
 
 
 def jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b) if a or b else 1.0
 
 
-def clusters(samples: list[tuple[str, set, frozenset]], threshold: float) -> list[list[str]]:
-    """Samples (id, structure, role types) in groups, largest first. Each joins the group it overlaps most
-    on average, if that reaches `threshold` and their role types match; ids in sorted order keep it stable."""
+def clusters(samples: list[tuple[str, str, set, frozenset]], threshold: float) -> list[list[str]]:
+    """Samples (id, URL path, structure, role types) in groups, largest first. Each joins the group it overlaps
+    most on average, among those whose role types match and whose every member it overlaps by `threshold` (so a
+    page like two pages that are unlike each other does not chain them into one group). Taken in path order,
+    then id: the id holds the host, and the groups must not change with it, nor with the input order."""
     groups: list[tuple[frozenset, list]] = []
-    for uid, feats, roles in sorted(samples, key=lambda s: s[0]):
+    for uid, path, feats, roles in sorted(samples, key=lambda s: (s[1], s[0])):
         best, best_score = None, threshold
         for g in groups:
             if g[0] != roles:
                 continue
-            score = sum(jaccard(feats, f) for _, f in g[1]) / len(g[1])
-            if score >= best_score:
+            scores = [jaccard(feats, f) for _, _, f in g[1]]
+            score = sum(scores) / len(scores)
+            if min(scores) >= threshold and score >= best_score:
                 best, best_score = g, score
         if best is None:
-            groups.append((roles, [(uid, feats)]))
+            groups.append((roles, [(uid, path, feats)]))
         else:
-            best[1].append((uid, feats))
-    ordered = sorted(([u for u, _ in g[1]] for g in groups), key=lambda ids: (-len(ids), ids[0]))
-    return ordered
+            best[1].append((uid, path, feats))
+    ordered = sorted((g[1] for g in groups), key=lambda m: (-len(m), m[0][1], m[0][0]))
+    return [[u for u, _, _ in m] for m in ordered]
 
 
 @dataclass
@@ -84,8 +91,7 @@ def judge(members: list[str], observations: dict[str, PageObservation], records:
     sampled = [u for u in members if u in observations]
     unusable = {u: r for u in sampled if (r := unusable_reason(observations[u], records[u]))}
     usable = [u for u in sampled if u not in unusable]
-    groups = clusters([(u, set(observations[u].features), frozenset(set(observations[u].structured_data_types) & ROLE_TYPES))
-                       for u in usable], config.similarity_threshold)
+    groups = clusters([sample(u, observations[u], records[u]) for u in usable], config.similarity_threshold)
     templates = [g for g in groups if len(g) >= config.min_agreeing_samples]
     rest = sorted(u for g in groups if len(g) < config.min_agreeing_samples for u in g)
     more = len(sampled) < len(members)
@@ -137,7 +143,7 @@ def template_queues(candidates: list[RouteCandidate], records: list[URLRecord], 
     saturated from the start. Calling it again without new observations changes nothing."""
     by_id = {r.id: r for r in records}
     usable = usable_pages(observations.values(), by_id)
-    home = {u: n for n, members in enumerate(site_clusters(usable, config)) for u in members}
+    home = {u: n for n, members in enumerate(site_clusters(usable, by_id, config)) for u in members}
     window, out, grouped = config.saturation_window, [], set()
     for c in sorted(candidates, key=lambda c: (-len(c.member_ids), c.pattern)):
         grouped.update(c.member_ids)

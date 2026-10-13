@@ -10,7 +10,9 @@ from route_map.features import is_rich_text, main_root, observe, structure
 from route_map.validation import jaccard
 
 from route_map.export import summary
-from route_map.models import PageObservation
+from route_map.inference import infer
+from route_map.models import Config, PageObservation
+from route_map.normalization import display_path
 
 from test_route_roles import CONTACT
 from test_route_validation import COMPARE, by_pattern, product, run, seen, uid
@@ -145,22 +147,28 @@ def test_a_family_exception_is_its_own_template_and_the_family_counts_its_unsamp
     assert all(u.template_id is None for u in result.urls if u.crawl_url in urls[5:10])  # unchecked
 
 
-def test_templates_do_not_depend_on_url_or_observation_order():
-    urls, obs = personal_site()
-    more = [f"{BASE}/product/item-{n}" for n in range(10)] + [BASE + "/product/compare", BASE + "/about", BASE + "/privacy"]
-    urls += more
-    obs += [seen(u, product(n)) for n, u in enumerate(more[:5])] + [seen(more[10], COMPARE)]
-    obs += [seen(u, INFO.format(name=u)) for u in more[11:]]
-    first = run(urls, obs)
-    assert len(first.templates) == 7
-    for seed in range(4):
-        rng = random.Random(seed)
-        u, o = urls[:], obs[:]
-        rng.shuffle(u)
-        rng.shuffle(o)
-        again = run(u, o)
-        assert [t.model_dump() for t in again.templates] == [t.model_dump() for t in first.templates]
-        assert {r.id: r.template_id for r in again.urls} == {r.id: r.template_id for r in first.urls}
+# alpha~beta 0.67, beta~gamma 0.71, alpha~gamma 0.43: beta is like both, but alpha and gamma are unlike each other.
+CHAIN = {"/alpha": range(1, 5), "/docs/beta": range(1, 7), "/guides/x/gamma": range(2, 8)}
+
+
+def test_templates_do_not_depend_on_host_or_input_order():
+    """The page ids hold the host; the clustering order must not, nor the order pages and URLs come in. A page
+    like two pages that are unlike each other does not bring them into one template."""
+    def templates(base, shuffle):
+        urls = [base + p for p in CHAIN]
+        obs = [PageObservation(url_id=uid(base + p), fetch_result="ok", status=200, final_url=base + p,
+                               features=[f"main>div>x{n}" for n in feats]) for p, feats in CHAIN.items()]
+        random.Random(shuffle).shuffle(urls)
+        random.Random(shuffle).shuffle(obs)
+        result = infer([(u, "inventory") for u in urls], Config(), seed=base + "/", observations=obs)
+        path = {u.id: display_path(u.crawl_url) for u in result.urls}
+        return [(t.id, t.representative, t.status, sorted(path[u] for u in t.page_ids)) for t in result.templates]
+
+    first = templates("https://shop.test", 0)
+    assert not any({"/alpha", "/guides/x/gamma"} <= set(pages) for *_, pages in first)
+    for base in ("https://shop.test", "http://127.0.0.1:5000"):
+        for shuffle in range(3):
+            assert templates(base, shuffle) == first
 
 
 def test_unusable_pages_are_in_no_template():

@@ -22,7 +22,7 @@ def inventory(records: list[URLRecord], routes: list[RouteRecord], observations:
     features = {u: set(o.features) for u, o in usable.items()}
     # ponytail: clustering compares each page with every member of every template, O(pages² × templates);
     # an inverted index on skeleton paths is the upgrade if crawls grow to many thousands of pages.
-    groups = site_clusters(usable, config)
+    groups = site_clusters(usable, by_id, config)
 
     def closeness(u, members):  # rounded so that true ties fall to the path, whatever the float order
         return round(sum(jaccard(features[u], features[v]) for v in members if v != u) / max(1, len(members) - 1), 9)
