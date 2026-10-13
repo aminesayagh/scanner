@@ -56,8 +56,8 @@ would catch it on the first screen. Small and low impact; revisit with the next 
   mostly paragraphs, headings, lists and figures. A large custom component inside a post body (a div
   pricing table, an embedded form) keeps its structure, so that post may become a template of its own.
   Revisit with real blogs and page builders.
-- **Templates: saturation is not proof.** A family stops being sampled after 5 pages in a row add no new
-  template, so a layout used by 1 page in 500 can be missed. `stop_reasons` shows the families the
+- **Templates: saturation is not proof.** A family stops being sampled once 5 checked pages (counted per
+  round) touch no template it had not touched before, so a layout used by 1 page in 500 can be missed. `stop_reasons` shows the families the
   budget left open, not the ones that saturated too early.
 - **Templates: served HTML only.** Two layouts that differ only in CSS or in client-side rendering count
   as one template. Comes with optional rendering.
