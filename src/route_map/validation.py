@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from .features import ROLE_TYPES
 from .models import Config, PageObservation, RouteCandidate, URLRecord
-from .normalization import normalize
+from .normalization import display_path, normalize
 
 
 def unusable_reason(obs: PageObservation, record: URLRecord) -> str | None:
@@ -149,7 +149,8 @@ def template_queues(candidates: list[RouteCandidate], records: list[URLRecord], 
             state[c.pattern] = (touched, 0 if touched > before else quiet + checked - seen, checked)
         if state[c.pattern][1] >= window:
             continue
-        rest = sorted(c.member_ids, key=lambda u: hashlib.sha1(u.encode()).hexdigest())
+        # by a hash of the path, not the id: the id holds the host, so the order would change with it
+        rest = sorted(c.member_ids, key=lambda u: (hashlib.sha1(display_path(by_id[u].crawl_url).encode()).hexdigest(), u))
         queue = [u for u in dict.fromkeys(c.sample_ids + c.extra_sample_ids + rest) if u not in observations and u not in skip]
         if queue:
             out.append((c, queue))

@@ -61,12 +61,14 @@ def _query_name(key: str) -> str:
 def sample_plan(members: list[tuple[str, str]], size: int, groups: dict[str, str] | None = None) -> list[str]:
     """Up to `size` member ids spread over different value shapes (type, length, digits), and over the
     outer value of a two-parameter family (`groups`: id -> e.g. its collection), the same whatever the input
-    order: shapes in sorted order, taken in turn; within a shape, by a hash of the id."""
+    order and whatever the host: shapes in sorted order, taken in turn; within a shape, by a hash of the value
+    (the id holds the host)."""
     by_shape = defaultdict(list)
+    value_of = dict(members)
     for uid, value in members:
         length = 0 if len(value) <= 8 else 1 if len(value) <= 24 else 2
         by_shape[((groups or {}).get(uid, ""), value_type([value]), length, any(c.isdigit() for c in value))].append(uid)
-    queues = [sorted(ids, key=lambda i: hashlib.sha1(i.encode()).hexdigest()) for _, ids in sorted(by_shape.items())]
+    queues = [sorted(ids, key=lambda i: (hashlib.sha1(value_of[i].encode()).hexdigest(), i)) for _, ids in sorted(by_shape.items())]
     picked = []
     while len(picked) < size and any(queues):
         for q in queues:

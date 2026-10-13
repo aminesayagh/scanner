@@ -236,7 +236,7 @@ class DiscoverySpider(Spider):
         open_families, single = template_queues(candidates, records, observed, self.config, self.saturation, skip)
         for c, unchecked in open_families:
             if len(unchecked) < len(c.member_ids):  # never checked at all: the validation reason covers it
-                self.stop_reasons.add(f"budget ran out while {c.pattern} kept showing new templates: "
+                self.stop_reasons.add(f"budget ran out before {c.pattern} was saturated: "
                                       f"{len(unchecked)} of {len(c.member_ids)} members not checked")
         if single:
             self.stop_reasons.add(f"budget ran out before {len(single)} individual pages were checked")

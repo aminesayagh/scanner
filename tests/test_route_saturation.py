@@ -83,8 +83,8 @@ def test_a_hundred_different_posts_use_the_budget_and_say_what_was_left(tmp_path
     data = site.map(tmp_path, "--max-html-pages", "40")
     posts = {u["id"] for u in data["urls"] if "/blog/post-" in u["crawl_url"]}
     checked = {o["url_id"] for o in data["observations"]} & posts
-    reasons = [r for r in data["crawl_report"]["stop_reasons"] if r.startswith("budget ran out while /blog/")]
-    assert reasons == [f"budget ran out while /blog/{{segment_2}} kept showing new templates: "
+    reasons = [r for r in data["crawl_report"]["stop_reasons"] if r.startswith("budget ran out before /blog/")]
+    assert reasons == [f"budget ran out before /blog/{{segment_2}} was saturated: "
                        f"{100 - len(checked)} of 100 members not checked"]
     found = [t for t in data["templates"] if set(t["page_ids"]) & posts]
     assert len(found) == len(checked) and all(t["status"] == "single" for t in found)
