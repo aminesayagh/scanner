@@ -350,7 +350,8 @@ family: their pages share a template and carry a contact form. The map took 12 r
   - **What is compared:** each page's main content (`<main>`, `[role=main]` or `<article>`; otherwise the
     body without header, nav, footer and aside, marked as weaker evidence) as a set of tag paths such as
     `ul>li>a`. Texts, prices, generated ids and how many cards repeat do not count; a different component
-    does. Pages whose JSON-LD names different things (Product vs Article) never agree.
+    does. Pages whose JSON-LD names different things (Product vs Article) never agree. Signals read outside
+    the main content (`og:type` or article dates in `<head>`, a search box in the header) do not count.
   - **Agreement:** two pages agree when their structure overlaps by at least 50% (Jaccard). A page joins a
     group only when it agrees with every member, so a page halfway between two unlike pages does not chain
     them together. Pages are taken in URL path order, so the groups do not change with the host or port.
@@ -447,11 +448,16 @@ towards splitting.
 - **Clustering:** every usable checked page of the site is grouped by skeleton, with the same 50% rule and
   JSON-LD check as validation. A page that failed, redirected or read as an error page has no template.
 - **Templates phase:** after validation, the rest of the page budget keeps fetching unchecked members of
-  each family while that family's pages touch templates not seen before anywhere on the site.
-  - **Saturation:** a family is saturated once `--saturation-window` checked pages in a row (5 by default)
-    add no new template. A family validated on one template, with no exceptions, is saturated from the
-    start, so a 1,000-product shop spends nothing more on products.
-  - **Single pages:** each URL in no family is checked once.
+  each family, in rounds, while that family's pages keep touching templates the family had not touched
+  before. Such a template may already exist elsewhere on the site: a blog post on the home page's layout
+  still counts as new for the blog family.
+  - **Saturation:** each family counts the pages checked since it last touched a new template; the count
+    is updated once per round (to 0 after any round in which the family touched a new template, otherwise
+    up by the pages that round checked). The family is saturated once the count reaches
+    `--saturation-window` (5 by default). A family validated on one template, with no exceptions, is
+    saturated from the start, so a 1,000-product shop spends nothing more on products.
+  - **Single pages:** each URL in no family is checked once, except pages that were already requested and
+    were not HTML, and pages found only deeper than `--max-depth` (links of pages fetched after discovery).
   - **Budget:** families take turns, up to one window of pages each per round. When the budget runs out,
     `stop_reasons` names each family still showing new templates (with how many members were not checked)
     and how many individual pages were never checked.

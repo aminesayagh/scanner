@@ -11,9 +11,11 @@ Jaccard overlap of their main-content structure; samples whose structured data n
 - too few usable samples: still provisional.
 A redirected or failed sample is not evidence against its family: it is set aside, never collapses it.
 
-After validation, families keep being sampled while their pages show templates not seen yet anywhere on the
-site (plan_templates), so a blog whose posts use many layouts gets each layout found, as far as the budget
-allows, while one whose posts share a layout stops early.
+After validation, families keep being sampled in rounds while their pages touch site-wide templates the family
+had not touched before, even ones other pages already use (plan_templates). The count of quiet pages is updated
+once per round; a family stops at `saturation_window`. So a blog whose posts use many layouts gets each layout
+found, as far as the budget allows, while one whose posts share a layout stops early. URLs in no family are
+checked once (the spider leaves out pages that were not HTML and pages found only deeper than max_depth).
 """
 
 import hashlib

@@ -26,6 +26,9 @@ CARD_PARTS = {"div", "article", "section", "img", "picture", "figure", "h1", "h2
 # Structured-data types that name what a page is about; two samples with different ones are different pages.
 ROLE_TYPES = {"Product", "ProductGroup", "Article", "BlogPosting", "NewsArticle", "Recipe", "Event", "JobPosting",
               "CollectionPage", "SearchResultsPage", "ContactPage", "AboutPage", "FAQPage", "ItemList", "Offer"}
+# Signals read outside the main content (<head> metadata, a header search box): kept for roles, left out of the
+# features that group pages, since a theme puts them on every page.
+PAGE_WIDE_SIGNALS = {"article_meta", "search"}
 _CHECKOUT = re.compile(r"\bcheck[\s_-]*out\b|proceed to payment|passer la commande|zur kasse", re.I)
 _PURCHASE = re.compile(r"add[\s_-]*to[\s_-]*(cart|bag|basket)|buy[\s_-]*now|ajouter au panier|in den warenkorb", re.I)
 
@@ -159,7 +162,7 @@ def observe(html: str, url: str) -> dict:
     paths, blocks = _skeleton(main, source == "heuristic", True)
     return {
         "title": (sel.css("title::text").get() or "").strip() or None,
-        "features": sorted(paths | {f"signal:{s}" for s in found}),
+        "features": sorted(paths | {f"signal:{s}" for s in found if s not in PAGE_WIDE_SIGNALS}),
         "rich_text_blocks": blocks,
         "structured_data_types": types,
         "breadcrumbs": crumbs,

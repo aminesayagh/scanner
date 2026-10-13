@@ -202,3 +202,14 @@ def test_a_card_list_inside_a_page_wrapper_stays_layout():
     result = run(urls, [seen(urls[0], CATEGORY), seen(urls[1], ABOUT)])
     assert len(result.templates) == 2
     assert "div>rich_text" in skeleton(ABOUT) and "div>rich_text" not in skeleton(CATEGORY)
+
+
+def test_head_and_header_do_not_decide_the_skeleton():
+    """og:type and a search box in the header are on any page of a theme; they stay signals, not features."""
+    body = "<main><h1>Spring</h1><div class=\"intro\"><p>Light.</p><span>New</span></div></main>"
+    plain = f"<html><head><title>A</title></head><body>{body}</body></html>"
+    tagged = ('<html><head><title>A</title><meta property="og:type" content="article"></head><body>'
+              f'<header><form role="search"><input type="search" name="q"></form></header>{body}</body></html>')
+    a, b = observe(plain, BASE + "/a"), observe(tagged, BASE + "/b")
+    assert a["features"] == b["features"]
+    assert {"article_meta", "search"} <= set(b["signals"])  # still read, for roles

@@ -61,5 +61,8 @@ would catch it on the first screen. Small and low impact; revisit with the next 
   budget left open, not the ones that saturated too early.
 - **Templates: served HTML only.** Two layouts that differ only in CSS or in client-side rendering count
   as one template. Comes with optional rendering.
+- **Templates: stop-reason gaps.** A family first found during the templates phase (from the links of a
+  sampled page) and never checked gets no stop reason when the budget runs out: the reasons name only
+  families with at least one checked member, so such a family is missing from `stop_reasons` silently.
 - **Templates: 0.5 threshold tuned on fixtures.** The same Jaccard threshold groups pages into templates;
   a false merge hides a layout from the screenshots. Re-measure on real sites before trusting it.
